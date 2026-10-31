@@ -1,0 +1,11 @@
+# Build output and libFuzzer state. Hand-written seeds live in seeds/
+# (committed); corpus/ is the growing working corpus, rebuilt from seeds/ by
+# run_all.sh. Crash reproducers in artifacts/ are hostile input: never commit.
+target/
+corpus/
+artifacts/
+coverage/
+logs/
+# Not committed: a lock resolved on a machine with a local registry patch
+# would pin path sources. A clean clone resolves from crates.io.
+Cargo.lock

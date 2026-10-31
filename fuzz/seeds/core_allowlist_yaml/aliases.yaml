@@ -1,0 +1,4 @@
+domains:
+  - &d { suffix: a.example, reason: x }
+  - *d
+  - *d

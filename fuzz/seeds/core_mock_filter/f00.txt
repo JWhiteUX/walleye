@@ -1,0 +1,1 @@
+host 10.0.0.5 and dns.query ~ "*.top" and bytes_up > 1MB and not app_proto == tls
