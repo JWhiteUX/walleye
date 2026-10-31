@@ -436,6 +436,12 @@ pub struct HelloSpec<'a> {
 
 /// ClientHello handshake message (not wrapped in a record).
 pub fn client_hello(s: &HelloSpec<'_>) -> Vec<u8> {
+    client_hello_with(s, &[])
+}
+
+/// ClientHello with extra extensions carrying data (e.g. a 1216-byte
+/// X25519MLKEM768 key_share, as Chrome and Firefox send), appended last.
+pub fn client_hello_with(s: &HelloSpec<'_>, extra: &[(u16, Vec<u8>)]) -> Vec<u8> {
     let mut b = vec![3, 3];
     b.extend_from_slice(&[0x11; 32]);
     b.push(32);
@@ -468,6 +474,9 @@ pub fn client_hello(s: &HelloSpec<'_>) -> Vec<u8> {
         let mut d = vec![u8::try_from(v.len()).expect("v")];
         d.extend_from_slice(&v);
         exts.extend(ext(0x002b, &d));
+    }
+    for (ty, data) in extra {
+        exts.extend(ext(*ty, data));
     }
     b.extend_from_slice(&vec16(&exts));
     handshake(1, &b)

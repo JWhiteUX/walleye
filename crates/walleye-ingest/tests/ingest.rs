@@ -377,3 +377,64 @@ fn read_frame_and_hash_file() {
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     );
 }
+
+/// Browser-sized ClientHello (X25519MLKEM768 key share, 1216 + 32 bytes) that
+/// spans two MSS-sized TCP segments must still yield SNI and JA4; the same
+/// segments out of order are dropped (no row), never misparsed.
+#[test]
+fn clienthello_spanning_two_segments() {
+    let mut share = Vec::new();
+    share.extend_from_slice(&0x11ecu16.to_be_bytes()); // X25519MLKEM768
+    share.extend_from_slice(&1216u16.to_be_bytes());
+    share.extend(std::iter::repeat_n(0x42u8, 1216));
+    share.extend_from_slice(&0x001du16.to_be_bytes()); // X25519
+    share.extend_from_slice(&32u16.to_be_bytes());
+    share.extend(std::iter::repeat_n(0x24u8, 32));
+    let mut ks = u16::try_from(share.len())
+        .expect("len")
+        .to_be_bytes()
+        .to_vec();
+    ks.extend_from_slice(&share);
+    let spec = HelloSpec {
+        sni: Some("www.google.com"),
+        alpn: &["h2", "http/1.1"],
+        ciphers: &[0x2a2a, 0x1301, 0x1302, 0x1303, 0xc02b, 0xc02f],
+        versions: &[0x3a3a, 0x0304, 0x0303],
+        sig_algs: &[0x0403, 0x0804, 0x0401],
+        other_exts: &[0x0017, 0xff01, 0x000a, 0x000b, 0x0023, 0x002d],
+    };
+    let rec = tls_record(22, &client_hello_with(&spec, &[(0x0033, ks)]));
+    assert!(rec.len() > 1300, "{}", rec.len());
+    let ch = walleye_ingest::parse_tls_client_hello(&rec).expect("parse");
+    let want = walleye_ingest::ja4(&ch, 't');
+
+    let build = |reorder: bool| {
+        let mut t = Tcp::new(([10, 0, 0, 5], 52000), ([142, 250, 0, 1], 443), T0);
+        t.handshake();
+        t.client(&rec[..1000]);
+        t.client(&rec[1000..]);
+        let mut frames = t.frames.clone();
+        if reorder {
+            frames.swap(3, 4);
+        }
+        let mut p = Pcap::new(1);
+        p.add(&frames);
+        collect(&p.buf, &IngestOptions::default())
+    };
+    let rows = build(false);
+    assert_eq!(rows.tls.len(), 1);
+    let r = &rows.tls[0];
+    assert_eq!(r.sni.as_deref(), Some("www.google.com"));
+    assert_eq!(r.ja4.as_deref(), Some(want.as_str()));
+    assert!(want.starts_with("t13d0511h2_"), "{want}");
+    assert_eq!(
+        r.frame_no, 4,
+        "row points at the segment where the record starts"
+    );
+
+    let rows = build(true);
+    assert!(
+        rows.tls.is_empty(),
+        "out-of-order segments are dropped, not misparsed"
+    );
+}
