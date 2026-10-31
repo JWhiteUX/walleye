@@ -1,0 +1,33 @@
+# Rust
+target/
+**/*.rs.bk
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+coverage/
+playwright-report/
+test-results/
+
+# Captures, indexes, case data (large and/or hostile)
+*.pcap
+*.pcapng
+*.cap
+*.parquet
+*.duckdb
+*.duckdb.wal
+fixtures/external/
+fixtures/generated/
+cases/
+
+# Fuzzing output
+fuzz/artifacts/
+fuzz/coverage/
+
+# Env / OS / editors
+.env
+.env.*
+.DS_Store
+.idea/
+.vscode/
