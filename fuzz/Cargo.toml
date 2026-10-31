@@ -1,0 +1,157 @@
+# cargo-fuzz workspace for Walleye. Separate from the main workspace (it needs
+# nightly and sanitizer flags); the root Cargo.toml lists it under `exclude`.
+#
+#   rustup run nightly cargo fuzz list
+#   fuzz/run_all.sh 60                          # every target that builds today
+#   FEATURES="ingest index" fuzz/run_all.sh 600 # after integration
+#
+# Targets against crates that are still being built are gated by the
+# `ingest` / `index` features (PENDING.md lists the exact functions needed).
+[package]
+name = "walleye-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+members = ["."]
+
+[features]
+default = []
+# walleye-ingest fuzz entry points (Agent A).
+ingest = ["dep:walleye-ingest"]
+# walleye-index filter parser/compiler (Agent B).
+index = ["dep:walleye-index"]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+walleye-core = { path = "../crates/walleye-core" }
+walleye-ingest = { path = "../crates/walleye-ingest", optional = true }
+walleye-index = { path = "../crates/walleye-index", optional = true }
+
+[profile.release]
+debug = 1
+
+# ---- buildable now (walleye-core) ------------------------------------------
+
+[[bin]]
+name = "core_allowlist_yaml"
+path = "fuzz_targets/core_allowlist_yaml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_allowlist_match"
+path = "fuzz_targets/core_allowlist_match.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_rule_yaml"
+path = "fuzz_targets/core_rule_yaml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_render_template"
+path = "fuzz_targets/core_render_template.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_ipc_json"
+path = "fuzz_targets/core_ipc_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_mock_filter"
+path = "fuzz_targets/core_mock_filter.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_mock_backend"
+path = "fuzz_targets/core_mock_backend.rs"
+test = false
+doc = false
+bench = false
+
+# ---- pending: walleye-ingest (feature "ingest") ----------------------------
+
+[[bin]]
+name = "ingest_read_capture"
+path = "fuzz_targets/ingest_read_capture.rs"
+required-features = ["ingest"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ingest_decode_frame"
+path = "fuzz_targets/ingest_decode_frame.rs"
+required-features = ["ingest"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ingest_dns"
+path = "fuzz_targets/ingest_dns.rs"
+required-features = ["ingest"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ingest_http"
+path = "fuzz_targets/ingest_http.rs"
+required-features = ["ingest"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ingest_tls_client_hello"
+path = "fuzz_targets/ingest_tls_client_hello.rs"
+required-features = ["ingest"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ingest_tls_server_hello"
+path = "fuzz_targets/ingest_tls_server_hello.rs"
+required-features = ["ingest"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ingest_certificate"
+path = "fuzz_targets/ingest_certificate.rs"
+required-features = ["ingest"]
+test = false
+doc = false
+bench = false
+
+# ---- pending: walleye-index (feature "index") ------------------------------
+
+[[bin]]
+name = "index_filter"
+path = "fuzz_targets/index_filter.rs"
+required-features = ["index"]
+test = false
+doc = false
+bench = false

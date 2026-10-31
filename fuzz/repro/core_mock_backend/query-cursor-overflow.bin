@@ -1,0 +1,1 @@
+{"req": {"filter": "host 10.0.0.23", "view": "flows", "limit": 50, "sort": {"column": "bytes_down", "desc": true}, "cursor": "18446744073709551615"}}

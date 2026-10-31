@@ -1,0 +1,7 @@
+id: a
+title: t
+detector: d
+explanation: e
+params:
+  a: &x [1, 2, 3]
+  b: *x

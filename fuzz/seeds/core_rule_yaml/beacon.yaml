@@ -1,0 +1,15 @@
+id: beacon.periodic
+title: Periodic outbound connections
+detector: beaconing
+enabled: true
+attack_technique: T1071
+params:
+  min_count: 8
+  max_jitter: 0.2
+  min_duration_s: 600
+  ports: [80, 443]
+weights:
+  regularity: 50
+  count: 20
+min_score: 30
+explanation: "{src} contacted {dst} {count} times, every {interval_s}s"

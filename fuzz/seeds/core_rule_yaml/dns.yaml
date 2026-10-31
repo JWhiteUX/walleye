@@ -1,0 +1,7 @@
+id: dns.entropy
+title: High-entropy DNS labels
+detector: dns_entropy
+attack_technique: T1071.004
+params: { min_entropy: 3.5, name: "x" }
+weights: { entropy: 60 }
+explanation: "{src} queried {count} names under {parent}"
