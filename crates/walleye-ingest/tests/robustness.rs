@@ -264,11 +264,15 @@ fn decode_ranges_stay_inside_the_frame() {
             check(&n.children, len);
         }
     }
-    let raw = include_bytes!("../../../fuzz/repro/ingest_decode_frame/ipv4-ihl-past-frame.bin");
-    let (lt, frame) = raw.split_at(4);
-    let lt = u32::from_le_bytes(lt.try_into().expect("4 bytes"));
-    // The fuzz target folds the link type onto common values; try them all.
-    for link in [lt, 1, 101, 0, 113, 276] {
-        check(&walleye_ingest::decode_frame(link, frame), frame.len());
+    for raw in [
+        &include_bytes!("../../../fuzz/repro/ingest_decode_frame/ipv4-ihl-past-frame.bin")[..],
+        &include_bytes!("../../../fuzz/repro/ingest_decode_frame/http-uri-escaped-len.bin")[..],
+    ] {
+        let (lt, frame) = raw.split_at(4);
+        let lt = u32::from_le_bytes(lt.try_into().expect("4 bytes"));
+        // The fuzz target folds the link type onto common values; try them all.
+        for link in [lt, 1, 101, 0, 113, 276] {
+            check(&walleye_ingest::decode_frame(link, frame), frame.len());
+        }
     }
 }

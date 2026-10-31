@@ -886,19 +886,29 @@ fn http_node(data: &[u8], base: usize) -> DecodeNode {
             version,
         } => {
             let mut l = tree(format!("{method} {uri} {version}"), base + first.0, first.1);
+            // Byte ranges come from the raw line: `method`/`uri` are escaped
+            // for display, so their string lengths can exceed the wire bytes
+            // (fuzz: ingest_decode_frame).
+            let line = data.get(first.0..first.0 + first.1).unwrap_or(&[]);
+            let m_len = line.iter().position(|&c| c == b' ').unwrap_or(line.len());
+            let rest = line.get(m_len + 1..).unwrap_or(&[]);
+            let u_len = rest
+                .iter()
+                .position(|&c| c == b' ' || c == b'\r' || c == b'\n')
+                .unwrap_or(rest.len());
             l.children.push(leaf(
                 "Method",
                 Some(F_HTTP_METHOD),
                 method.clone(),
                 base + first.0,
-                method.len(),
+                m_len,
             ));
             l.children.push(leaf(
                 "URI",
                 Some(F_HTTP_URI),
                 uri.clone(),
-                base + first.0 + method.len() + 1,
-                uri.len(),
+                base + first.0 + (m_len + 1).min(line.len()),
+                u_len,
             ));
             n.children.push(l);
         }
@@ -912,12 +922,15 @@ fn http_node(data: &[u8], base: usize) -> DecodeNode {
                 base + first.0,
                 first.1,
             );
+            let line = data.get(first.0..first.0 + first.1).unwrap_or(&[]);
+            let v_len = line.iter().position(|&c| c == b' ').unwrap_or(line.len());
+            let s_start = (v_len + 1).min(line.len());
             l.children.push(leaf(
                 "Status code",
                 Some(F_HTTP_STATUS),
                 status.to_string(),
-                base + first.0 + version.len() + 1,
-                3,
+                base + first.0 + s_start,
+                3.min(line.len() - s_start),
             ));
             n.children.push(l);
         }
