@@ -5,6 +5,15 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+description = "Detection quality eval: C2 rank, hit@k and top-10 false-positive rate"
+
+[lib]
+name = "walleye_eval"
+path = "src/lib.rs"
+
+[[bin]]
+name = "walleye-eval"
+path = "src/main.rs"
 
 [dependencies]
 walleye-core.workspace = true

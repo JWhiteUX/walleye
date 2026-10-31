@@ -1,0 +1,9 @@
+{
+  "scenario": "external",
+  "source": "https://www.malware-traffic-analysis.net/2024/12/17/index.html (2024-12-17-SmartApeSG-to-NetSupport-RAT.pcap.zip)",
+  "sha256": "3d4d0b98311d7edd4e00def085450db692e62ba3f626075e7cd633f0cc340b86",
+  "c2_hosts": ["10.12.17.101"],
+  "bad_destinations": ["194.180.191.64", "depostsolo.biz", "tactlat.xyz"],
+  "benign": false,
+  "notes": "SmartApeSG injected script -> fake browser update -> NetSupport RAT. C2 194.180.191.64:443 (HTTP POST /fakeurl.htm). geo.netsupportsoftware.com is the RAT's legitimate geolocation lookup, not C2. Infected host from tcpdump of C2 packet headers."
+}

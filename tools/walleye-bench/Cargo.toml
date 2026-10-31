@@ -5,9 +5,24 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+description = "Query latency benchmark (p50/p95/max per query) for a Walleye index"
+
+[lib]
+name = "walleye_bench"
+path = "src/lib.rs"
+
+[[bin]]
+name = "walleye-bench"
+path = "src/main.rs"
+
+[features]
+# Wire the real `walleye_index::Index` (lead enables this at integration:
+# `cargo run -p walleye-bench --release --features index -- --index <dir> ...`).
+index = ["dep:walleye-index"]
 
 [dependencies]
 walleye-core.workspace = true
+walleye-index = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 
