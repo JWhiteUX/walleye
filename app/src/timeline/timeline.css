@@ -1,0 +1,87 @@
+/* Timeline panel. Colours come from theme.css tokens only. */
+.wl-tl {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border-bottom: 1px solid var(--wl-border);
+  background: var(--wl-surface);
+}
+.wl-tl-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wl-space-2) var(--wl-space-3);
+  padding: var(--wl-space-1) var(--wl-space-2);
+}
+.wl-tl-title { font-size: 13px; margin: 0; }
+.wl-tl-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wl-space-3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  color: var(--wl-text);
+  font-size: 12px;
+}
+.wl-tl-legend li { display: inline-flex; align-items: center; gap: 4px; }
+.wl-tl-tools { display: flex; gap: var(--wl-space-1); margin-left: auto; }
+.wl-tl-tools button {
+  font: inherit;
+  font-size: 12px;
+  color: var(--wl-text);
+  background: var(--wl-surface-2);
+  border: 1px solid var(--wl-border);
+  border-radius: var(--wl-radius);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.wl-tl-tools button:disabled { color: var(--wl-text-muted); cursor: default; }
+.wl-tl-status {
+  margin: 0;
+  padding: 0 var(--wl-space-2) var(--wl-space-1);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wl-tl-status-label { font-weight: 600; }
+.wl-tl-muted { color: var(--wl-text-muted); }
+.wl-tl-body { position: relative; flex: 1; min-height: 0; }
+.wl-tl-scroller { position: absolute; inset: 0; overflow-x: hidden; overflow-y: auto; }
+.wl-tl-canvas {
+  position: sticky;
+  top: 0;
+  display: block;
+  width: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+.wl-tl-canvas:focus-visible { outline: none; } /* focus ring is drawn on the canvas */
+.wl-tl-empty {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 40px;
+  margin: 0;
+  text-align: center;
+  color: var(--wl-text-muted);
+  pointer-events: none;
+}
+.wl-tl-tip {
+  position: absolute;
+  z-index: 2;
+  min-width: 180px;
+  padding: var(--wl-space-2);
+  background: var(--wl-surface-2);
+  color: var(--wl-text);
+  border: 1px solid var(--wl-border);
+  border-radius: var(--wl-radius);
+  font-size: 12px;
+  pointer-events: none;
+}
+.wl-tl-tip-host { font-family: var(--wl-font-mono); font-weight: 600; }
+.wl-tl-tip ul { list-style: none; margin: 4px 0 0; padding: 0; }
+.wl-tl-tip li { display: flex; align-items: center; gap: 4px; }
