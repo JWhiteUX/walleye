@@ -21,4 +21,9 @@ tcp_flags: number | null,
 /**
  * Transport payload length in bytes (0 when none or unknown).
  */
-payload_len: number, };
+payload_len: number, 
+/**
+ * LINKTYPE_* of the interface this frame came from (pcapng may mix
+ * link types). NULL means "use `CaptureRow.link_type`".
+ */
+link_type: number | null, };

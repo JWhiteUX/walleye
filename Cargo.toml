@@ -6,6 +6,7 @@ members = [
     "crates/walleye-index",
     "crates/walleye-detect",
     "crates/walleye-case",
+    "crates/walleye-engine",
     "app/src-tauri",
     "tools/walleye-gen",
     "tools/walleye-bench",
@@ -29,6 +30,7 @@ walleye-ingest = { path = "crates/walleye-ingest" }
 walleye-index = { path = "crates/walleye-index" }
 walleye-detect = { path = "crates/walleye-detect" }
 walleye-case = { path = "crates/walleye-case" }
+walleye-engine = { path = "crates/walleye-engine" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"

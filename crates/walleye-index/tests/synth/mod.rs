@@ -375,6 +375,7 @@ impl<'a> Gen<'a> {
             direction: Some(dir),
             tcp_flags: flags,
             payload_len: payload,
+            link_type: Some(1),
         });
         self.app_rows(f, i)?;
         if self.frames.len() >= BATCH {

@@ -143,6 +143,16 @@ async fn case_unpin(state: State<'_, AppState>, case_id: String, pin_id: String)
 }
 
 #[tauri::command(rename_all = "snake_case")]
+async fn case_update_note(
+    state: State<'_, AppState>,
+    case_id: String,
+    pin_id: String,
+    note: String,
+) -> R<Pin> {
+    run(state, move |b| b.case_update_note(&case_id, &pin_id, &note)).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
 async fn export_report(
     state: State<'_, AppState>,
     case_id: String,
@@ -178,6 +188,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         get_case,
         case_pin,
         case_unpin,
+        case_update_note,
         export_report,
     ]
 }

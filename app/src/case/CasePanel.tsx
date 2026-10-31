@@ -86,16 +86,13 @@ export function CasePanel() {
   };
   const onPinIoc = (i: Ioc) => void pin({ kind: "ioc", ioc_id: i.ioc_id }, "");
   const onAddNote = (text: string) => pin({ kind: "note" }, text.trim());
-  // No in-place edit command exists yet (requested from the lead as
-  // `case_update_note`): pin the same evidence with the new note, then
-  // remove the old pin. If re-pinning fails the old pin is kept.
+  // Edit in place: the pin keeps its id, evidence and position.
   const onEditNote = async (p: Pin, text: string) => {
     if (!caseId) return false;
     if (text === p.note) return true;
-    return run("Edit note", async () => {
-      await api.casePin(caseId, p.evidence, p.evidence.kind === "note" ? text.trim() : text);
-      await api.caseUnpin(caseId, p.pin_id);
-    });
+    return run("Edit note", () =>
+      api.caseUpdateNote(caseId, p.pin_id, p.evidence.kind === "note" ? text.trim() : text),
+    );
   };
   const onUnpin = (p: Pin) => {
     if (!caseId) return;

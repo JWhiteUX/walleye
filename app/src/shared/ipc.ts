@@ -96,6 +96,8 @@ export const api = {
   casePin: (case_id: string, evidence: EvidenceRef, note = "") =>
     call<Pin>("case_pin", { case_id, evidence, note }),
   caseUnpin: (case_id: string, pin_id: string) => call<null>("case_unpin", { case_id, pin_id }),
+  caseUpdateNote: (case_id: string, pin_id: string, note: string) =>
+    call<Pin>("case_update_note", { case_id, pin_id, note }),
   exportReport: (case_id: string, format: ReportFormat, timeline_png_base64?: string) =>
     call<string>("export_report", { case_id, format, timeline_png_base64: timeline_png_base64 ?? null }),
 } as const;

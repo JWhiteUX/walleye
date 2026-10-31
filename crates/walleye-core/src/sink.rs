@@ -73,10 +73,11 @@ pub trait DetectSource {
 }
 
 /// Write side for analysis results. Implemented by walleye-index. Each call
-/// replaces the table's previous contents (detection is re-runnable).
+/// replaces the table's previous contents (detection is re-runnable). Takes
+/// `&self` so callers holding a shared `Arc<Index>` can use it.
 pub trait ResultSink {
-    fn put_findings(&mut self, findings: &[Finding]) -> ApiResult<()>;
-    fn put_iocs(&mut self, iocs: &[Ioc]) -> ApiResult<()>;
+    fn put_findings(&self, findings: &[Finding]) -> ApiResult<()>;
+    fn put_iocs(&self, iocs: &[Ioc]) -> ApiResult<()>;
 }
 
 /// In-memory `DetectSource` for tests and the eval harness.

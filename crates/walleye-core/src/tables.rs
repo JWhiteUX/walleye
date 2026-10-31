@@ -72,6 +72,10 @@ pub struct FrameRow {
     pub tcp_flags: Option<u8>,
     /// Transport payload length in bytes (0 when none or unknown).
     pub payload_len: u32,
+    /// LINKTYPE_* of the interface this frame came from (pcapng may mix
+    /// link types). NULL means "use `CaptureRow.link_type`".
+    #[serde(default)]
+    pub link_type: Option<u32>,
 }
 
 /// `flows` table: one row per bidirectional flow (5-tuple + idle timeout).

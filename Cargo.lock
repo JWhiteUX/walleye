@@ -4848,6 +4848,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "walleye-core",
+ "walleye-engine",
 ]
 
 [[package]]
@@ -4898,6 +4899,21 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.21",
  "walleye-core",
+]
+
+[[package]]
+name = "walleye-engine"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "walleye-case",
+ "walleye-core",
+ "walleye-detect",
+ "walleye-gen",
+ "walleye-index",
+ "walleye-ingest",
 ]
 
 [[package]]

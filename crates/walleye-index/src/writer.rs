@@ -28,7 +28,7 @@ use walleye_core::{
 
 use crate::schema::{self, ALL_TABLES, DATA_TABLES, Tab};
 
-pub(crate) const FORMAT_VERSION: u32 = 1;
+pub(crate) const FORMAT_VERSION: u32 = 2;
 pub(crate) const MANIFEST: &str = "manifest.json";
 const CHECKPOINT: &str = "checkpoint.json";
 /// Parquet options for every file we write.

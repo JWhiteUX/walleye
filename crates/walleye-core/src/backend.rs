@@ -42,6 +42,8 @@ pub trait Backend: Send + Sync {
     fn get_case(&self, case_id: &str) -> ApiResult<Case>;
     fn case_pin(&self, case_id: &str, evidence: &EvidenceRef, note: &str) -> ApiResult<Pin>;
     fn case_unpin(&self, case_id: &str, pin_id: &str) -> ApiResult<()>;
+    /// Replace a pin's note, keeping its id, evidence and position.
+    fn case_update_note(&self, case_id: &str, pin_id: &str, note: &str) -> ApiResult<Pin>;
     /// `timeline_png_base64`: optional PNG snapshot of the timeline canvas.
     /// Writes into the case's `exports/` dir and returns the absolute path.
     fn export_report(

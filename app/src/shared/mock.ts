@@ -487,6 +487,13 @@ const handlers: Record<string, Handler> = {
     if (state.pins.length === n) throw err("not_found", `pin ${s(a, "pin_id")}`);
     return null;
   },
+  case_update_note: (a) => {
+    checkCase(s(a, "case_id"));
+    const pin = state.pins.find((p) => p.pin_id === s(a, "pin_id"));
+    if (!pin) throw err("not_found", `pin ${s(a, "pin_id")}`);
+    pin.note = s(a, "note") ?? "";
+    return { ...pin };
+  },
   export_report: (a) => {
     requireOpen();
     checkCase(s(a, "case_id"));

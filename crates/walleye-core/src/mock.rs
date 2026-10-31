@@ -903,6 +903,18 @@ impl Backend for MockBackend {
         Ok(())
     }
 
+    fn case_update_note(&self, case_id: &str, pin_id: &str, note: &str) -> ApiResult<Pin> {
+        self.check_case(case_id)?;
+        let mut st = self.lock();
+        let pin = st
+            .pins
+            .iter_mut()
+            .find(|p| p.pin_id == pin_id)
+            .ok_or_else(|| ApiError::not_found(format!("pin {pin_id}")))?;
+        pin.note = note.to_string();
+        Ok(pin.clone())
+    }
+
     fn export_report(
         &self,
         case_id: &str,

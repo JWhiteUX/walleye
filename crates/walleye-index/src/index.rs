@@ -1072,23 +1072,15 @@ impl DetectSource for Index {
 }
 
 impl ResultSink for Index {
-    fn put_findings(&mut self, findings: &[Finding]) -> ApiResult<()> {
-        let rows = findings
-            .iter()
-            .map(schema::finding_values)
-            .collect::<ApiResult<Vec<_>>>()?;
-        self.put_table(Tab::Findings, rows)
+    fn put_findings(&self, findings: &[Finding]) -> ApiResult<()> {
+        self.replace_findings(findings)
     }
-    fn put_iocs(&mut self, iocs: &[Ioc]) -> ApiResult<()> {
-        let rows = iocs
-            .iter()
-            .map(schema::ioc_values)
-            .collect::<ApiResult<Vec<_>>>()?;
-        self.put_table(Tab::Iocs, rows)
+    fn put_iocs(&self, iocs: &[Ioc]) -> ApiResult<()> {
+        self.replace_iocs(iocs)
     }
 }
 
-/// `ResultSink` through a shared reference, for callers holding `Arc<Index>`.
+/// Replace the findings / IOC tables (also available via `ResultSink`).
 impl Index {
     pub fn replace_findings(&self, findings: &[Finding]) -> ApiResult<()> {
         let rows = findings

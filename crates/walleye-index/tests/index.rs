@@ -103,6 +103,7 @@ fn frames_for(f: &FlowRow) -> Vec<FrameRow> {
                 None
             },
             payload_len: if i == 2 { 10 } else { 0 },
+            link_type: Some(1),
         })
         .collect()
 }
@@ -690,7 +691,7 @@ fn sample_finding(entity: &str, score: f64) -> Finding {
 #[test]
 fn results_roundtrip_and_replace() {
     let d = TempDir::new("results");
-    let mut idx = build_small(d.path());
+    let idx = build_small(d.path());
     assert!(idx.findings(None).expect("empty").is_empty());
     let a = sample_finding("10.0.0.23", 80.0);
     let mut b = sample_finding("10.0.0.5", 40.0);

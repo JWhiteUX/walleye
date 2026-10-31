@@ -69,6 +69,7 @@ impl Tab {
                 ("direction", "VARCHAR"),
                 ("tcp_flags", "UTINYINT"),
                 ("payload_len", "UINTEGER"),
+                ("link_type", "UINTEGER"),
             ],
             Tab::Flows => &[
                 ("flow_id", "UBIGINT"),
@@ -235,6 +236,7 @@ pub fn frame_values(r: &FrameRow) -> Vec<Value> {
         opt(r.direction, |d| text(dir_str(d))),
         opt(r.tcp_flags, Value::UTinyInt),
         Value::UInt(r.payload_len),
+        opt(r.link_type, Value::UInt),
     ]
 }
 
@@ -414,6 +416,7 @@ pub fn frame_from(r: &duckdb::Row<'_>) -> ApiResult<FrameRow> {
         direction: dir_of(r.get(6).map_err(db)?),
         tcp_flags: r.get(7).map_err(db)?,
         payload_len: r.get(8).map_err(db)?,
+        link_type: r.get(9).map_err(db)?,
     })
 }
 
