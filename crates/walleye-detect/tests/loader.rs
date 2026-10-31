@@ -39,14 +39,21 @@ const RULE: &str = "id: x.one\ntitle: T\ndetector: beaconing\nattack_technique: 
 #[test]
 fn repo_rules_load_and_cover_every_detector() {
     let rs = load_rules(&repo_root().join("rules")).expect("load");
-    assert_eq!(rs.len(), 6, "one rule per detector");
+    assert_eq!(rs.len(), 9, "one rule per detector");
     for d in DETECTORS {
         assert!(
             rs.defs().any(|r| r.detector == *d && r.enabled),
             "no enabled rule for {d}"
         );
     }
-    let allowed = ["T1071", "T1071.004", "T1568.002", "T1048"];
+    let allowed = [
+        "T1071",
+        "T1071.001",
+        "T1071.004",
+        "T1568.002",
+        "T1048",
+        "T1041",
+    ];
     for r in rs.defs() {
         let t = r.attack_technique.as_deref().expect("technique");
         assert!(allowed.contains(&t), "{} uses {t}", r.id);
