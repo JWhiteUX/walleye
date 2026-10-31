@@ -33,7 +33,7 @@ walleye-detect = { path = "crates/walleye-detect" }
 walleye-case = { path = "crates/walleye-case" }
 walleye-engine = { path = "crates/walleye-engine" }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }  # exact f64 parsing (fuzz: core_rule_yaml)
 serde_yaml_ng = "0.10"
 thiserror = "2"
 ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"] }
