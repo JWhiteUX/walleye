@@ -13,6 +13,10 @@ const MAX_JUMPS: usize = 32;
 const MAX_NAME: usize = 255;
 pub const MAX_QUESTIONS: usize = 8;
 pub const MAX_ANSWERS: usize = 64;
+/// Rendered answer text per message. Compression pointers let a few hundred
+/// wire bytes render as 64 KiB of escaped names; stop well before that
+/// (security review: CPU and memory amplification).
+pub const MAX_RENDERED_BYTES: usize = 8 * 1024;
 const MAX_TXT: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,14 +103,19 @@ pub fn parse_dns(msg: &[u8]) -> ParseResult<DnsMessage> {
             }
         }
     }
+    let mut rendered = 0usize;
     for _ in 0..ancount {
-        if m.answers.len() >= MAX_ANSWERS {
+        if m.answers.len() >= MAX_ANSWERS || rendered > MAX_RENDERED_BYTES {
+            if m.answers.len() < usize::from(ancount) {
+                m.truncated = true;
+            }
             break;
         }
         let start = c.pos();
         match read_rr(msg, &mut c) {
             Ok(mut a) => {
                 a.span = (start, c.pos() - start);
+                rendered += a.name.len() + a.data.as_ref().map_or(0, String::len);
                 m.answers.push(a);
             }
             Err(_) => {

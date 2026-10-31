@@ -97,7 +97,15 @@ fn flush(out: &mut Out, tx: &SyncSender<Msg>, force: bool, batch_rows: usize) ->
     }
     table!(frames, Frames);
     table!(flows, Flows);
-    table!(dns, Dns);
+    // DNS rows carry variable-size text (answers): flush them in smaller
+    // batches so a hostile capture can't hold hundreds of MB of rows.
+    {
+        let nd = n.min(8_192);
+        if (force && !out.dns.is_empty()) || out.dns.len() >= nd {
+            let rows = std::mem::replace(&mut out.dns, Vec::with_capacity(nd));
+            send(tx, Msg::Batch(RecordBatch::Dns(rows)))?;
+        }
+    }
     table!(http, Http);
     table!(tls, Tls);
     table!(files, Files);

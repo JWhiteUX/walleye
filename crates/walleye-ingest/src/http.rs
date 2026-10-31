@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use walleye_core::{Direction, FileRow, HttpRow};
 
 use crate::out::{Ctx, Out};
-use crate::util::{ParseError, ParseResult, escape_bytes, find, starts_with_ci};
+use crate::util::{ParseError, ParseResult, escape_bytes, starts_with_ci};
 
 /// Largest request/response head buffered (bytes).
 pub const MAX_HEAD: usize = 16 * 1024;
@@ -90,13 +90,20 @@ impl HttpHead {
 }
 
 /// End of the head: offset just past the blank line (`\r\n\r\n` or `\n\n`).
+///
+/// One pass, stopping at the first terminator: the cost is the head's length,
+/// not the buffer's, so a segment of many tiny pipelined messages stays linear.
 pub fn head_end(b: &[u8]) -> Option<usize> {
-    let crlf = find(b, b"\r\n\r\n").map(|p| p + 4);
-    let lf = find(b, b"\n\n").map(|p| p + 2);
-    match (crlf, lf) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (a, b) => a.or(b),
+    let mut i = 0;
+    while let Some(off) = b.get(i..)?.iter().position(|&c| c == b'\n') {
+        let nl = i + off;
+        match (b.get(nl + 1), b.get(nl + 2)) {
+            (Some(b'\n'), _) => return Some(nl + 2),
+            (Some(b'\r'), Some(b'\n')) => return Some(nl + 3),
+            _ => i = nl + 1,
+        }
     }
+    None
 }
 
 /// Parse an HTTP/1.x request or response head. `Truncated` if the blank line
@@ -273,7 +280,6 @@ impl HttpConn {
         if gap > 0 {
             self.on_gap(d, gap, out);
         }
-        let mut owned: Vec<u8>;
         let mut input: &[u8] = data;
         while !input.is_empty() {
             let body = self.dirs[d].body.clone().unwrap_or(Body::Head);
@@ -296,12 +302,32 @@ impl HttpConn {
                         dd.buf_frame = ctx.frame_no;
                         dd.buf_ts = ctx.ts;
                     }
-                    let room = MAX_HEAD.saturating_sub(dd.buf.len());
+                    // Fast path: a whole head at the start of `input` is
+                    // parsed in place, without copying the rest of the
+                    // segment (pipelined messages would otherwise be
+                    // quadratic: security review).
+                    if dd.buf.is_empty() {
+                        let window = input.get(..input.len().min(MAX_HEAD)).unwrap_or(input);
+                        if let Some(end) = head_end(window) {
+                            let (frame, ts) = (dd.buf_frame, dd.buf_ts);
+                            let head = input.get(..end).unwrap_or(&[]);
+                            match parse_http(head) {
+                                Ok(h) => self.on_head(d, &h, frame, ts, ctx, out),
+                                Err(_) => {
+                                    self.dirs[d].desync = true;
+                                    return;
+                                }
+                            }
+                            input = input.get(end..).unwrap_or(&[]);
+                            continue;
+                        }
+                    }
+                    let old_len = dd.buf.len();
+                    let room = MAX_HEAD.saturating_sub(old_len);
                     let take = input.len().min(room);
                     // Search only where a terminator can newly appear.
                     let search_from = dd.buf.len().saturating_sub(3);
                     dd.buf.extend_from_slice(input.get(..take).unwrap_or(&[]));
-                    let rest_in = input.get(take..).unwrap_or(&[]);
                     let found =
                         head_end(dd.buf.get(search_from..).unwrap_or(&[])).map(|e| e + search_from);
                     let Some(end) = found else {
@@ -311,8 +337,10 @@ impl HttpConn {
                         }
                         return;
                     };
-                    let mut leftover = dd.buf.split_off(end);
-                    leftover.extend_from_slice(rest_in);
+                    // A new terminator includes at least one new byte, so the
+                    // head ends inside this `input`: continue right after it.
+                    let consumed = end.saturating_sub(old_len).min(take);
+                    dd.buf.truncate(end);
                     let head_bytes = std::mem::take(&mut dd.buf);
                     let (frame, ts) = (dd.buf_frame, dd.buf_ts);
                     match parse_http(&head_bytes) {
@@ -322,8 +350,7 @@ impl HttpConn {
                             return;
                         }
                     }
-                    owned = leftover;
-                    input = &owned;
+                    input = input.get(consumed..).unwrap_or(&[]);
                 }
                 Body::Fixed(n) => {
                     let k = n.min(input.len() as u64);

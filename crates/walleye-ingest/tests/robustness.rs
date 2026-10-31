@@ -247,3 +247,28 @@ fn dump_fuzz_seeds() {
     write("parse_tls_server_hello", &p[6..7]);
     write("parse_certificate", &p[7..9]);
 }
+
+/// cargo-fuzz finding (fuzz/repro/ingest_decode_frame): an IPv4 header length
+/// past the end of the frame produced an "Options" range outside the frame.
+#[test]
+fn decode_ranges_stay_inside_the_frame() {
+    fn check(nodes: &[walleye_core::ipc::DecodeNode], len: usize) {
+        for n in nodes {
+            if let Some(r) = n.range {
+                assert!(
+                    r.start as usize + r.len as usize <= len,
+                    "{r:?} past {len} at {}",
+                    n.label
+                );
+            }
+            check(&n.children, len);
+        }
+    }
+    let raw = include_bytes!("../../../fuzz/repro/ingest_decode_frame/ipv4-ihl-past-frame.bin");
+    let (lt, frame) = raw.split_at(4);
+    let lt = u32::from_le_bytes(lt.try_into().expect("4 bytes"));
+    // The fuzz target folds the link type onto common values; try them all.
+    for link in [lt, 1, 101, 0, 113, 276] {
+        check(&walleye_ingest::decode_frame(link, frame), frame.len());
+    }
+}

@@ -165,6 +165,13 @@ pub struct FlowTableState {
     pub max_ts: Ts,
 }
 
+/// Live (unexpired) flows kept in memory. A hostile capture of SYNs with a
+/// constant timestamp never expires anything, so without a cap every packet
+/// adds a flow (security review: ~12× the file size in RAM). When full, the
+/// least recently active 10 % are closed early; a closed flow that sees more
+/// packets continues as a new flow row.
+pub const MAX_LIVE_FLOWS: usize = 500_000;
+
 pub struct FlowTable {
     map: HashMap<FlowKey, Flow>,
     pub next_id: u64,
@@ -216,6 +223,20 @@ impl FlowTable {
             .collect();
     }
 
+    /// Close the least recently active tenth of the table. Bulk eviction keeps
+    /// the cost amortized O(log n) per new flow.
+    fn evict_oldest(&mut self, out: &mut Out) {
+        let mut ends: Vec<(Ts, u64, FlowKey)> =
+            self.map.iter().map(|(k, f)| (f.ts_end, f.id, *k)).collect();
+        let n = (ends.len() / 10).max(1);
+        ends.select_nth_unstable_by_key(n - 1, |e| (e.0, e.1));
+        for (_, _, k) in ends.into_iter().take(n) {
+            if let Some(mut f) = self.map.remove(&k) {
+                f.close(out);
+            }
+        }
+    }
+
     fn timeout(&self, proto: u8) -> i64 {
         if proto == PROTO_TCP {
             self.tcp_timeout_us
@@ -247,6 +268,9 @@ impl FlowTable {
                     old.close(out);
                 }
             }
+        }
+        if self.map.len() >= MAX_LIVE_FLOWS && !self.map.contains_key(&key) {
+            self.evict_oldest(out);
         }
         let next_id = &mut self.next_id;
         let f = self.map.entry(key).or_insert_with(|| {
@@ -391,7 +415,7 @@ pub fn dns_row(m: &DnsMessage, ctx: Ctx) -> DnsRow {
         query: q.map(|q| q.name.clone()).unwrap_or_default(),
         qtype: q.map_or_else(|| "TYPE0".to_string(), |q| qtype_name(q.qtype)),
         rcode: m.is_response.then(|| rcode_name(m.rcode)),
-        answers: m.answers.iter().filter_map(|a| a.data.clone()).collect(),
+        answers: capped_answers(m),
         ttl: m.answers.iter().map(|a| a.ttl).min(),
     }
 }
@@ -540,4 +564,22 @@ fn dns_tcp_feed(dt: &mut DnsTcp, d: usize, data: &[u8], gap: u64, ctx: Ctx, out:
         dt.starts[d] = (ctx.frame_no, ctx.ts);
     }
     dt.bufs[d].drain(..used);
+}
+
+/// Rendered answer text kept per DNS row. A hostile response can render 64
+/// answers of ~1 KiB each (`\001` escapes) from a few hundred wire bytes;
+/// without a cap, rows outgrow the capture ~50× in memory (security review).
+pub const MAX_ROW_ANSWER_BYTES: usize = 4096;
+
+fn capped_answers(m: &crate::dns::DnsMessage) -> Vec<String> {
+    let mut used = 0usize;
+    let mut out = Vec::new();
+    for d in m.answers.iter().filter_map(|a| a.data.as_deref()) {
+        if used + d.len() > MAX_ROW_ANSWER_BYTES {
+            break;
+        }
+        used += d.len();
+        out.push(d.to_string());
+    }
+    out
 }

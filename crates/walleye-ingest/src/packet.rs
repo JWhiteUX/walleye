@@ -74,6 +74,15 @@ pub fn slice_link(link_type: u32, data: &[u8]) -> Option<LaxSlicedPacket<'_>> {
     }
 }
 
+/// Largest transport payload passed to stream parsers from one frame. Real
+/// segments (including TSO/GRO captures with IPv4 `total_len = 0`) stay well
+/// under it; a hostile record that claims 64 MiB of payload does not.
+pub const MAX_SEGMENT: usize = 256 * 1024;
+
+fn clamp_segment(p: &[u8]) -> &[u8] {
+    p.get(..p.len().min(MAX_SEGMENT)).unwrap_or(p)
+}
+
 /// Extract addresses, ports and payload. `None` for non-IP frames, IP
 /// fragments and frames too short to carry their transport header.
 pub fn parse_packet(link_type: u32, data: &[u8]) -> Option<PacketInfo<'_>> {
@@ -129,7 +138,7 @@ pub fn parse_packet(link_type: u32, data: &[u8]) -> Option<PacketInfo<'_>> {
                     seq: tcp.sequence_number(),
                     flags,
                 }),
-                payload: tcp.payload(),
+                payload: clamp_segment(tcp.payload()),
                 payload_len: to_u32(declared.saturating_sub(hl)),
             })
         }
@@ -140,7 +149,7 @@ pub fn parse_packet(link_type: u32, data: &[u8]) -> Option<PacketInfo<'_>> {
             sport: udp.source_port(),
             dport: udp.destination_port(),
             tcp: None,
-            payload: udp.payload(),
+            payload: clamp_segment(udp.payload()),
             payload_len: to_u32(declared.saturating_sub(8)),
         }),
         Some(TransportSlice::Icmpv4(_)) | Some(TransportSlice::Icmpv6(_)) | None => {

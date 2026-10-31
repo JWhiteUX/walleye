@@ -392,6 +392,11 @@ fn ipv4(b: &[u8], off: usize, nodes: &mut Vec<DecodeNode>) {
         nodes.push(warn(n, "header length below 20"));
         return;
     }
+    if off + ihl > b.len() {
+        // Every range must stay inside the frame (fuzz: ingest_decode_frame).
+        nodes.push(warn(n, "header length past end of frame"));
+        return;
+    }
     if ihl > 20 {
         n.children.push(tree(
             format!("Options ({} bytes)", ihl - 20),

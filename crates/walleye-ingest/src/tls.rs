@@ -472,7 +472,16 @@ impl TlsConn {
     }
 
     fn handshakes(&mut self, d: usize, ctx: Ctx, out: &mut Out) {
+        // A real handshake flight is a handful of messages; thousands of
+        // empty ones in one record would make the drain below quadratic.
+        const MAX_MESSAGES_PER_CALL: usize = 64;
+        let mut seen = 0usize;
         loop {
+            seen += 1;
+            if seen > MAX_MESSAGES_PER_CALL {
+                self.dir_done(d, out);
+                return;
+            }
             let hs = &self.dirs[d].hs;
             let mut c = Cur::new(hs);
             let (Ok(ty), Ok(body)) = (c.u8(), c.vec(3)) else {

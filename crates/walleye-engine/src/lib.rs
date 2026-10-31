@@ -272,6 +272,9 @@ impl Engine {
 
 /// Hash → index (or resume, or reuse) → detect → IOCs → open case, then make
 /// it the current capture.
+/// Bytes of a frame returned as hex by `packet` (CONTRACTS §3).
+pub const MAX_HEX_BYTES: usize = 1 << 20;
+
 /// One open at a time per process: two jobs on the same capture would run two
 /// writers (or a writer and `replace_findings`) on one index directory and
 /// delete each other's files.
@@ -368,6 +371,14 @@ fn open_pipeline(
         Err(e) => return Err(e),
     };
     let capture = index.capture()?;
+    // The directory is named by a 64-bit hash prefix: never reuse another
+    // capture's index (or case) on a prefix collision.
+    if capture.sha256 != sha256 {
+        return Err(ApiError::new(
+            ErrorCode::BadCapture,
+            format!("index {capture_id} belongs to a different capture (SHA-256 mismatch)"),
+        ));
+    }
 
     // 3. Detect + IOCs (85–100 %). Always re-run: cheap, and picks up
     //    rule or allowlist changes.
@@ -413,6 +424,11 @@ fn open_pipeline(
         case_dir,
         findings,
     });
+    // A job cancelled during detection must not replace the capture the UI
+    // still shows (security review). Its index stays complete for next time.
+    if cancel.load(Ordering::Relaxed) {
+        return Err(ApiError::new(ErrorCode::Cancelled, "cancelled"));
+    }
     *current.write().unwrap_or_else(|p| p.into_inner()) = Some(opened);
     report(&Progress {
         phase: IngestPhase::Done,
@@ -566,7 +582,11 @@ impl Backend for Engine {
             link_type,
             flow_id: fr.flow_id,
             decode_tree: walleye_ingest::decode_frame(link_type, &bytes),
-            bytes_hex: hex(&bytes),
+            // Hex is capped (a hostile 64 MiB frame would be a 128 MiB IPC
+            // string); `caplen` still reports the full size.
+            bytes_hex: hex(bytes
+                .get(..bytes.len().min(MAX_HEX_BYTES))
+                .unwrap_or(&bytes)),
         })
     }
 

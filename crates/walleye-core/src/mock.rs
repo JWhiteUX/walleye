@@ -699,9 +699,12 @@ impl Backend for MockBackend {
             .find(|i| partial.is_char_boundary(*i))
             .unwrap_or(0);
         let before = &partial[..cur];
+        // `c.len_utf8()`, not 1: the delimiter may be multi-byte (U+00A0).
         let start = before
-            .rfind(|c: char| c.is_whitespace() || c == '(')
-            .map(|i| i + 1)
+            .char_indices()
+            .rev()
+            .find(|(_, c)| c.is_whitespace() || *c == '(')
+            .map(|(i, c)| i + c.len_utf8())
             .unwrap_or(0);
         let word = &before[start..];
         let prev = before[..start].split_whitespace().last().unwrap_or("");
@@ -1105,10 +1108,13 @@ mod tests {
         for repro in [
             include_str!("../../../fuzz/repro/core_mock_backend/query-cursor-overflow.bin"),
             include_str!("../../../fuzz/repro/core_mock_backend/timeline-range-overflow.bin"),
+            include_str!("../../../fuzz/repro/core_mock_backend/autocomplete-nbsp.bin"),
         ] {
             let args: serde_json::Value =
                 serde_json::from_str(&repro[1..]).unwrap_or_else(|e| panic!("{e}: {repro:?}"));
-            let cmd = if args["req"].get("view").is_some() {
+            let cmd = if args.get("partial_filter").is_some() {
+                "autocomplete"
+            } else if args["req"].get("view").is_some() {
                 "query"
             } else {
                 "timeline"
