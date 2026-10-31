@@ -1,0 +1,20 @@
+# Volume of record types that carry data (TXT, NULL, CNAME, MX) to one domain.
+id: dns.tunnel
+title: "DNS tunneling via {domain}"
+detector: dns_tunnel
+attack_technique: T1048
+params:
+  qtypes: ["TXT", "NULL", "CNAME", "MX"]   # quoted: bare NULL is YAML null
+  min_queries: 10
+  volume_full: 100      # queries for full volume points
+  bytes_low: 2000       # query + answer bytes for 0 points
+  bytes_high: 50000
+  allowlist_factor: 0.25
+  prevalence_min_hosts: 3 # domain queried by >= max(3, 30% of internal hosts): shared service, score reduced
+  prevalence_ratio: 0.3
+  prevalence_factor: 0.3
+weights:
+  record_volume: 25
+  byte_volume: 15
+min_score: 12
+explanation: "{src} sent {records} {qtypes} queries to {domain} moving {bytes} bytes in names and answers [{breakdown}]"
