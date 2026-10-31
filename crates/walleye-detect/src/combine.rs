@@ -71,7 +71,7 @@ pub(crate) fn combine(hits: Vec<Hit>, hosts: &Hosts) -> Vec<Finding> {
             let score: f64 = hits.iter().map(|h| h.reason.weight).sum::<f64>().min(100.0);
             let score = (score * 10.0).round() / 10.0;
             Some(Finding {
-                finding_id: finding_id(&detector, "host", &entity),
+                finding_id: finding_id("host", &entity),
                 title: top.title.clone(),
                 detector,
                 entity_type: "host".into(),

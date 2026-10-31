@@ -907,10 +907,7 @@ pub fn assert_evidence_valid(src: &MemorySource, findings: &[Finding]) {
     for f in findings {
         assert!(!f.reasons.is_empty(), "finding {} has no reasons", f.entity);
         assert_eq!(f.entity_type, "host");
-        assert_eq!(
-            f.finding_id,
-            walleye_detect::finding_id(&f.detector, "host", &f.entity)
-        );
+        assert_eq!(f.finding_id, walleye_detect::finding_id("host", &f.entity));
         assert!(f.score > 0.0 && f.score <= 100.0, "score {}", f.score);
         let sum: f64 = f.reasons.iter().map(|r| r.weight).sum();
         assert!(

@@ -268,13 +268,12 @@ impl EvAcc {
     }
 }
 
-/// `hex16(sha256("finding\0" + detector + "\0" + entity_type + "\0" + entity))`
-/// per CONTRACTS §2.
-pub fn finding_id(detector: &str, entity_type: &str, entity: &str) -> String {
+/// `hex16(sha256("finding\0" + entity_type + "\0" + entity))` per CONTRACTS §2.
+/// The detector is deliberately not hashed, so a host keeps its id (and its
+/// verdict) when its top reason changes between runs.
+pub fn finding_id(entity_type: &str, entity: &str) -> String {
     let mut h = Sha256::new();
     h.update(b"finding\0");
-    h.update(detector.as_bytes());
-    h.update(b"\0");
     h.update(entity_type.as_bytes());
     h.update(b"\0");
     h.update(entity.as_bytes());
@@ -407,16 +406,17 @@ mod tests {
 
     #[test]
     fn finding_id_matches_contract() {
-        let id = finding_id("beaconing", "host", "10.0.0.23");
+        let id = finding_id("host", "10.0.0.23");
         assert_eq!(id.len(), 16);
         assert!(
             id.bytes()
                 .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
         );
-        assert_eq!(id, finding_id("beaconing", "host", "10.0.0.23"));
-        assert_ne!(id, finding_id("dns", "host", "10.0.0.23"));
-        // Independent computation of the contract formula.
-        let d = Sha256::digest(b"finding\0beaconing\0host\x0010.0.0.23");
+        assert_eq!(id, finding_id("host", "10.0.0.23"));
+        assert_ne!(id, finding_id("host", "10.0.0.24"));
+        assert_ne!(id, finding_id("domain", "10.0.0.23"));
+        // Independent computation of the contract formula (no detector).
+        let d = Sha256::digest(b"finding\0host\x0010.0.0.23");
         let want: String = d[..8].iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(id, want);
     }
