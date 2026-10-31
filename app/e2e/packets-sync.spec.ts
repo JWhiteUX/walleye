@@ -55,9 +55,9 @@ test("frame list selection and ] / [ step through frames", async ({ page }) => {
 test("frames without bytes show a not_found state", async ({ page }) => {
   await page.goto("/?mock=open");
   // Packet bytes exist only for the first 120 flows (+ evidence flows); sort descending to reach later ones.
-  await page.getByRole("columnheader", { name: /^Flow/ }).getByRole("button").click();
-  await page.getByRole("columnheader", { name: /^Flow/ }).getByRole("button").click();
-  await expect(page.getByRole("columnheader", { name: /^Flow/ })).toHaveAttribute("aria-sort", "descending");
+  await page.getByTestId("table-grid").getByRole("columnheader", { name: /^Flow/ }).getByRole("button").click();
+  await page.getByTestId("table-grid").getByRole("columnheader", { name: /^Flow/ }).getByRole("button").click();
+  await expect(page.getByTestId("table-grid").getByRole("columnheader", { name: /^Flow/ })).toHaveAttribute("aria-sort", "descending");
   const rows = bodyRows(page);
   // Find a row whose frame has no bytes.
   for (let i = 0; i < 20; i++) {

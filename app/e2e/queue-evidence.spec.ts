@@ -46,7 +46,7 @@ test("queue → evidence sets the selection (flows, first frame, host)", async (
 
 // Cross-panel: needs Agent D's real packet pane (a stub in this worktree).
 // Once D's pane lands this should pass unchanged.
-test.fixme("queue → evidence → packet pane shows the frame", async ({ page }) => {
+test("queue → evidence → packet pane shows the frame", async ({ page }) => {
   const { panel, heads } = await openQueue(page);
   await heads.first().click();
   await panel.getByTestId("queue-evidence").first().click();

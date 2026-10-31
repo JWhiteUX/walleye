@@ -113,7 +113,7 @@ test("column filter composes into the visible filter text", async ({ page }) => 
 test("sorting is server-side and marked with text, not colour", async ({ page }) => {
   await page.goto("/?mock=open");
   await expect(bodyRows(page).first()).toBeVisible();
-  const header = page.getByRole("columnheader", { name: /Bytes up/ });
+  const header = page.getByTestId("table-grid").getByRole("columnheader", { name: /Bytes up/ });
   await header.getByRole("button").click();
   await expect(header).toHaveAttribute("aria-sort", "ascending");
   await header.getByRole("button").click();
@@ -140,6 +140,6 @@ test("view switcher changes the table view", async ({ page }) => {
   await page.goto("/?mock=open");
   await expect(bodyRows(page).first()).toBeVisible();
   await page.getByRole("button", { name: "DNS", exact: true }).click();
-  await expect(page.getByRole("columnheader", { name: /Query/ })).toBeVisible();
+  await expect(page.getByTestId("table-grid").getByRole("columnheader", { name: /Query/ })).toBeVisible();
   await expect(page.getByTestId("table-count")).toContainText(/514 rows/);
 });

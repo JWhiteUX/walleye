@@ -11,6 +11,7 @@ members = [
     "tools/walleye-gen",
     "tools/walleye-bench",
     "tools/walleye-eval",
+    "tools/walleye-devbridge",
 ]
 # cargo-fuzz keeps its own workspace (nightly, sanitizer flags).
 exclude = ["fuzz"]

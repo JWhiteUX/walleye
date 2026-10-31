@@ -53,3 +53,96 @@ pub trait Backend: Send + Sync {
         timeline_png_base64: Option<&str>,
     ) -> ApiResult<String>;
 }
+
+/// Dispatch a command by name with JSON arguments, exactly as the Tauri
+/// commands do (snake_case names and args, CONTRACTS §3). Used by the
+/// dev-only HTTP bridge (`tools/walleye-devbridge`) so Playwright can drive
+/// the UI against the real engine. The Tauri app does not use this; its
+/// commands are explicit in `app/src-tauri/src/commands.rs`.
+pub fn dispatch(
+    b: &dyn Backend,
+    cmd: &str,
+    args: serde_json::Value,
+) -> ApiResult<serde_json::Value> {
+    use serde::de::DeserializeOwned;
+    use serde_json::Value;
+
+    use crate::ApiError;
+    use crate::ErrorCode;
+
+    fn arg<T: DeserializeOwned>(args: &Value, k: &str) -> ApiResult<T> {
+        serde_json::from_value(args.get(k).cloned().unwrap_or(Value::Null))
+            .map_err(|e| ApiError::new(ErrorCode::InvalidArgument, format!("argument {k}: {e}")))
+    }
+    fn out<T: serde::Serialize>(v: ApiResult<T>) -> ApiResult<Value> {
+        v.and_then(|v| serde_json::to_value(v).map_err(|e| ApiError::internal(e.to_string())))
+    }
+    let a = &args;
+    match cmd {
+        "open_capture" => out(b.open_capture(&arg::<String>(a, "path")?)),
+        "ingest_status" => out(b.ingest_status(&arg::<String>(a, "job_id")?)),
+        "cancel_ingest" => out(b.cancel_ingest(&arg::<String>(a, "job_id")?)),
+        "current_capture" => out(b.current_capture()),
+        "query" => out(b.query(&arg(a, "req")?)),
+        "timeline" => out(b.timeline(&arg(a, "req")?)),
+        "flow_frames" => out(b.flow_frames(arg(a, "flow_id")?)),
+        "packet" => out(b.packet(arg(a, "frame_no")?)),
+        "autocomplete" => {
+            out(b.autocomplete(&arg::<String>(a, "partial_filter")?, arg(a, "cursor_pos")?))
+        }
+        "list_saved_queries" => out(b.list_saved_queries()),
+        "save_query" => out(b.save_query(&arg(a, "query")?)),
+        "delete_saved_query" => out(b.delete_saved_query(&arg::<String>(a, "name")?)),
+        "findings" => out(b.findings(arg::<Option<FindingsFilter>>(a, "filter")?.as_ref())),
+        "set_verdict" => out(b.set_verdict(
+            &arg::<String>(a, "finding_id")?,
+            arg(a, "verdict")?,
+            &arg::<Option<String>>(a, "note")?.unwrap_or_default(),
+        )),
+        "iocs" => out(b.iocs(&arg::<String>(a, "case_id")?)),
+        "export_iocs" => out(b.export_iocs(&arg::<String>(a, "case_id")?, arg(a, "format")?)),
+        "get_case" => out(b.get_case(&arg::<String>(a, "case_id")?)),
+        "case_pin" => out(b.case_pin(
+            &arg::<String>(a, "case_id")?,
+            &arg(a, "evidence")?,
+            &arg::<Option<String>>(a, "note")?.unwrap_or_default(),
+        )),
+        "case_unpin" => {
+            out(b.case_unpin(&arg::<String>(a, "case_id")?, &arg::<String>(a, "pin_id")?))
+        }
+        "case_update_note" => out(b.case_update_note(
+            &arg::<String>(a, "case_id")?,
+            &arg::<String>(a, "pin_id")?,
+            &arg::<String>(a, "note")?,
+        )),
+        "export_report" => out(b.export_report(
+            &arg::<String>(a, "case_id")?,
+            arg(a, "format")?,
+            arg::<Option<String>>(a, "timeline_png_base64")?.as_deref(),
+        )),
+        other => Err(ApiError::new(
+            ErrorCode::InvalidArgument,
+            format!("unknown command {other}"),
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mock::MockBackend;
+
+    #[test]
+    fn dispatch_matches_direct_calls() {
+        let m = MockBackend::preopened();
+        let v = dispatch(
+            &m,
+            "query",
+            serde_json::json!({"req": {"filter": "", "view": "flows", "limit": 3}}),
+        )
+        .expect("query");
+        assert_eq!(v["data"]["rows"].as_array().map(Vec::len), Some(3));
+        assert!(dispatch(&m, "nope", serde_json::json!({})).is_err());
+        assert!(dispatch(&m, "packet", serde_json::json!({"frame_no": "x"})).is_err());
+    }
+}

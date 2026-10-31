@@ -159,16 +159,19 @@ test.describe("dark theme", () => {
   });
 });
 
-// Cross-panel: needs Agent D's real session table (the table in this worktree is a stub).
-test.fixme("brush narrows the session table", async ({ page }) => {
+// Cross-panel: brushing narrows the session table. The table is virtualized,
+// so compare its total row count, not the number of rendered rows.
+test("brush narrows the session table", async ({ page }) => {
   const { box } = await openTimeline(page);
-  const rows = page.getByTestId("table-panel").getByRole("row");
-  await expect.poll(() => rows.count()).toBeGreaterThan(1);
-  const before = await rows.count();
+  const count = page.getByTestId("table-count");
+  await expect(count).toContainText(/\d/);
+  const total = async () => Number(((await count.textContent()) ?? "").replace(/[^0-9]/g, ""));
+  const before = await total();
+  expect(before).toBeGreaterThan(1);
   const y = box.y + AXIS_H + LANE_H / 2;
   await page.mouse.move(box.x + LABEL_W + 10, y);
   await page.mouse.down();
   await page.mouse.move(box.x + LABEL_W + 40, y, { steps: 4 });
   await page.mouse.up();
-  await expect.poll(() => rows.count(), { timeout: 1000 }).toBeLessThan(before);
+  await expect.poll(total, { timeout: 1000 }).toBeLessThan(before);
 });
