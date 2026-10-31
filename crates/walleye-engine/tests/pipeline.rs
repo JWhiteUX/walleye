@@ -178,7 +178,21 @@ fn beacon_capture_end_to_end() {
     });
     let _ = q;
 
-    // Re-opening the same capture reuses the index (no re-ingest).
+    // Re-opening the open capture returns the live session.
+    let again = engine
+        .open_blocking(pcap.to_str().expect("utf8"), &cancel, &mut |_| {})
+        .expect("reopen live");
+    assert_eq!(again.case_id, case_id);
+    assert!(
+        !engine
+            .findings(None)
+            .expect("findings after reopen")
+            .is_empty()
+    );
+
+    // After a restart, opening it reuses the index (no re-ingest).
+    let engine =
+        Engine::new(EngineConfig::new(tmp.path().join("data"), rules_dir())).expect("engine");
     let mut saw_indexing = false;
     engine
         .open_blocking(pcap.to_str().expect("utf8"), &cancel, &mut |p| {
@@ -210,6 +224,9 @@ fn old_format_index_is_rebuilt() {
     m["version"] = serde_json::json!(1);
     std::fs::write(&manifest, serde_json::to_vec(&m).expect("ser")).expect("write");
 
+    // A fresh engine (as after an app restart): re-opening the capture that is
+    // already open returns the live session without touching the index.
+    let engine = Engine::new(EngineConfig::new(&data, rules_dir())).expect("engine");
     let mut rebuilt = false;
     let s2 = engine
         .open_blocking(pcap.to_str().expect("utf8"), &cancel, &mut |p| {

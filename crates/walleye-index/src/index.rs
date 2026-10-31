@@ -287,7 +287,7 @@ impl Index {
             let c = idx
                 .base
                 .lock()
-                .map_err(|_| ApiError::internal("index lock"))?;
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let mut d = dir.to_string_lossy().to_string();
             if !d.ends_with('/') {
                 d.push('/');
@@ -305,12 +305,12 @@ impl Index {
         let m = self
             .manifest
             .lock()
-            .map_err(|_| ApiError::internal("index lock"))?
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         let c = self
             .base
             .lock()
-            .map_err(|_| ApiError::internal("index lock"))?;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for t in ALL_TABLES {
             let files = m.files.get(t.name()).cloned().unwrap_or_default();
             let sql = if files.is_empty() {
@@ -333,14 +333,14 @@ impl Index {
         let pooled = self
             .pool
             .lock()
-            .map_err(|_| ApiError::internal("index lock"))?
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .pop();
         let conn = match pooled {
             Some(c) => c,
             None => self
                 .base
                 .lock()
-                .map_err(|_| ApiError::internal("index lock"))?
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .try_clone()
                 .map_err(db)?,
         };
@@ -687,7 +687,7 @@ impl Index {
                WHEN app_proto = 'dns' THEN 0 WHEN app_proto = 'tls' THEN 1 WHEN app_proto = 'http' THEN 2 ELSE 4 END AS k \
                FROM flows WHERE {} AND ts_start >= ? AND ts_start < ?), \
              top AS (SELECT src_ip FROM f GROUP BY src_ip ORDER BY count(*) DESC, src_ip LIMIT ?) \
-             SELECT top.src_ip AS lane, (f.ts_start - ?) // ? AS bi, f.k, count(*) AS n \
+             SELECT top.src_ip AS lane, CAST((CAST(f.ts_start AS HUGEINT) - ?) // ? AS BIGINT) AS bi, f.k, count(*) AS n \
              FROM f LEFT JOIN top ON f.src_ip = top.src_ip GROUP BY ALL",
             c.sql
         );
@@ -714,7 +714,8 @@ impl Index {
             let n32 = u32::try_from(n).unwrap_or(u32::MAX);
             let e = lanes.entry(lane).or_default();
             e.0 += u64::try_from(n).unwrap_or(0);
-            let t = range.start + bi * bucket_us;
+            // Hostile captures can put timestamps anywhere in i64.
+            let t = range.start.saturating_add(bi.saturating_mul(bucket_us));
             let b = e.1.entry(t).or_insert_with(|| Bucket {
                 t,
                 ..Default::default()
@@ -833,7 +834,7 @@ impl Index {
             && let Some(v) = self
                 .top_values
                 .lock()
-                .map_err(|_| ApiError::internal("lock"))?
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .get(key)
         {
             return Ok(v.clone());
@@ -854,7 +855,7 @@ impl Index {
         if prefix.is_empty() {
             self.top_values
                 .lock()
-                .map_err(|_| ApiError::internal("lock"))?
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .insert(key.to_string(), out.clone());
         }
         Ok(out)
@@ -960,7 +961,7 @@ impl Index {
         let mut m = self
             .manifest
             .lock()
-            .map_err(|_| ApiError::internal("index lock"))?
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         let old = m.files.get(t.name()).cloned().unwrap_or_default();
         let generation = old
@@ -977,7 +978,7 @@ impl Index {
             let c = self
                 .base
                 .lock()
-                .map_err(|_| ApiError::internal("index lock"))?;
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             write_table(&c, &self.dir, t, &rel, rows)?;
         }
         m.files.insert(t.name().to_string(), vec![rel]);
@@ -986,7 +987,7 @@ impl Index {
         *self
             .manifest
             .lock()
-            .map_err(|_| ApiError::internal("index lock"))? = m;
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = m;
         self.create_views()?;
         for f in old {
             let _ = fs::remove_file(self.dir.join(f));

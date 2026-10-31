@@ -7,6 +7,7 @@ import { api } from "../shared/ipc";
 import { useSelection } from "../shared/selection";
 import { useFilterStatus } from "./filterStatus";
 import { applySuggestion, byteToUtf16, splitAtSpan, utf16ToByte } from "./filterText";
+import { visible } from "../shared/format";
 
 export const AUTOCOMPLETE_DEBOUNCE_MS = 60;
 
@@ -215,8 +216,8 @@ export const FilterBar = forwardRef<FilterBarHandle>(function FilterBar(_props, 
               }}
             >
               <span className="wl-suggest-kind">{KIND_LABEL[s.kind]}</span>
-              <span className="wl-mono wl-suggest-label">{s.label}</span>
-              {s.detail && <span className="wl-suggest-detail">{s.detail}</span>}
+              <span className="wl-mono wl-suggest-label">{visible(s.label)}</span>
+              {s.detail && <span className="wl-suggest-detail">{visible(s.detail)}</span>}
             </li>
           ))}
         </ul>

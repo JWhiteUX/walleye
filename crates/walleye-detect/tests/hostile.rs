@@ -205,3 +205,40 @@ fn allowlisted_destination_is_down_weighted_and_says_so() {
         r.explanation
     );
 }
+
+/// Code review: SNI and HTTP Host are chosen by the client (the implant), so
+/// a beacon that only *claims* an allowlisted or known-good name must keep its
+/// full score. Only a DNS answer resolving to the IP earns the down-weight.
+#[test]
+fn spoofed_sni_does_not_earn_allowlist_down_weight() {
+    let mut sy = Synth::new(3);
+    let host = "10.1.0.78";
+    for k in 0..90i64 {
+        let t = T0 + k * 60 * S;
+        // No DNS lookup: the implant connects to the IP directly and sets a
+        // trusted-looking SNI.
+        sy.tls(t, host, "93.184.216.60", "update.microsoft.com", 300, 900);
+    }
+    let src = sy.build();
+    let rules = repo_rules();
+    let none = run(&src, &rules, &Allowlist::default()).expect("run");
+    let full = none.first().expect("beacon").score;
+    let f = run(&src, &rules, &repo_allowlist()).expect("run");
+    let top = f
+        .first()
+        .expect("spoofed-SNI beacon must still be reported");
+    assert_eq!(top.entity, host);
+    assert!(
+        (top.score - full).abs() < 1e-9,
+        "{} vs {full}: {}",
+        top.score,
+        summary(&f)
+    );
+    assert!(
+        top.reasons.iter().all(
+            |r| !r.explanation.contains("allowlisted") && !r.explanation.contains("known-good")
+        ),
+        "{}",
+        summary(&f)
+    );
+}

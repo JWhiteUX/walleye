@@ -13,7 +13,8 @@
 //! reach `min_score` on volume alone.
 //!
 //! Down-weighting, each said in the explanation: destination allowlisted
-//! (IP or a name it was seen as via DNS answers, TLS SNI or HTTP Host),
+//! (the IP, or a name a DNS answer resolved to it; never SNI or HTTP Host,
+//! which the client chooses),
 //! destination under a rule-level `known_good_suffixes` entry, and
 //! destination contacted by a large share of internal hosts (fleet-wide
 //! software, not one compromised host).
@@ -296,9 +297,15 @@ fn measure(
 }
 
 /// Names each candidate destination was seen as (DNS answers, SNI, Host).
+///
+/// Only names learned from DNS answers (`resolved`) can earn an allowlist or
+/// known-good down-weight: SNI and the HTTP Host header are chosen by the
+/// client, i.e. by the implant, so `SNI: update.microsoft.com` on a beacon to
+/// an unrelated IP must not hide it. All names still label the destination.
 #[derive(Debug, Default)]
 pub(crate) struct DstNames {
     names: HashMap<u32, Vec<String>>,
+    resolved: HashMap<u32, Vec<String>>,
     /// Candidate flow → dst, for SNI / Host lookups.
     flows: HashMap<FlowId, u32>,
 }
@@ -339,8 +346,25 @@ impl DstNames {
         }
     }
 
+    /// A name from a DNS answer that resolved to `dst`.
+    pub(crate) fn add_resolved(&mut self, dst: u32, name: &str) {
+        self.add(dst, name);
+        let name = crate::util::normalize_name(name);
+        if name.is_empty() || !self.names.contains_key(&dst) {
+            return;
+        }
+        let v = self.resolved.entry(dst).or_default();
+        if v.len() < MAX_NAMES_PER_DST && !v.contains(&name) {
+            v.push(name);
+        }
+    }
+
     fn get(&self, dst: u32) -> &[String] {
         self.names.get(&dst).map_or(&[], Vec::as_slice)
+    }
+
+    fn resolved(&self, dst: u32) -> &[String] {
+        self.resolved.get(&dst).map_or(&[], Vec::as_slice)
     }
 }
 
@@ -380,8 +404,10 @@ pub(crate) fn finalize(
     let mut factor = 1.0;
     let mut notes: Vec<String> = Vec::new();
 
+    // Down-weights trust the IP and resolver answers only (see `DstNames`).
+    let trusted = cx.names.resolved(c.dst);
     let allow_hit = cx.allow.ip(dst_ip).map(str::to_string).or_else(|| {
-        names
+        trusted
             .iter()
             .find_map(|n| cx.allow.domain(n).map(str::to_string))
     });
@@ -393,7 +419,7 @@ pub(crate) fn finalize(
             display(&reason),
             fmt_num(f, 2)
         ));
-    } else if let Some(sfx) = names.iter().find_map(|n| {
+    } else if let Some(sfx) = trusted.iter().find_map(|n| {
         rule.strs("known_good_suffixes")
             .iter()
             .find(|s| has_suffix(n, s))

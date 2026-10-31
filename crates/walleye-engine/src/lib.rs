@@ -272,6 +272,11 @@ impl Engine {
 
 /// Hash → index (or resume, or reuse) → detect → IOCs → open case, then make
 /// it the current capture.
+/// One open at a time per process: two jobs on the same capture would run two
+/// writers (or a writer and `replace_findings`) on one index directory and
+/// delete each other's files.
+static OPEN_LOCK: Mutex<()> = Mutex::new(());
+
 fn open_pipeline(
     cfg: &EngineConfig,
     current: &Current,
@@ -279,6 +284,7 @@ fn open_pipeline(
     cancel: &AtomicBool,
     report: &mut dyn FnMut(&Progress),
 ) -> ApiResult<CaptureSession> {
+    let _serial = OPEN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let path = check_capture_path(path)?;
     let total = fs::metadata(&path).map_err(|e| io_err("capture", e))?.len();
 
@@ -306,6 +312,25 @@ fn open_pipeline(
         return Err(ApiError::new(ErrorCode::Cancelled, "cancelled"));
     }
     let capture_id = sha256.get(..16).unwrap_or(&sha256).to_string();
+    // Re-opening the capture that is already open returns the live session:
+    // rebuilding would replace the findings files its views are reading.
+    let live = current
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .filter(|o| o.session.capture.sha256 == sha256)
+        .map(|o| o.session.clone());
+    if let Some(session) = live {
+        report(&Progress {
+            phase: IngestPhase::Done,
+            pct: 100.0,
+            bytes_done: total,
+            bytes_total: total,
+            eta_s: None,
+            resumed: false,
+        });
+        return Ok(session);
+    }
     let cap_dir = cfg.data_dir.join("captures").join(&capture_id);
     let index_dir = cap_dir.join("index");
     let case_dir = cap_dir.join("case");
@@ -442,14 +467,23 @@ impl Backend for Engine {
             .name(format!("walleye-{id}"))
             .spawn(move || {
                 let j = job.clone();
-                let res = open_pipeline(&cfg, &current, &path, &job.cancel, &mut |p: &Progress| {
-                    let mut st = lock(&j.status);
-                    st.phase = p.phase;
-                    st.pct = (p.pct * 10.0).round() / 10.0;
-                    st.bytes_done = p.bytes_done;
-                    st.bytes_total = p.bytes_total;
-                    st.eta_s = p.eta_s;
-                    st.resumed |= p.resumed;
+                // A panic in ingest (a parser bug on a hostile capture) must
+                // end the job as `failed`, not leave it "indexing" forever.
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    open_pipeline(&cfg, &current, &path, &job.cancel, &mut |p: &Progress| {
+                        let mut st = lock(&j.status);
+                        st.phase = p.phase;
+                        st.pct = (p.pct * 10.0).round() / 10.0;
+                        st.bytes_done = p.bytes_done;
+                        st.bytes_total = p.bytes_total;
+                        st.eta_s = p.eta_s;
+                        st.resumed |= p.resumed;
+                    })
+                }))
+                .unwrap_or_else(|_| {
+                    Err(ApiError::internal(
+                        "ingest crashed on this capture (internal error); the capture may be malformed",
+                    ))
                 });
                 let mut st = lock(&job.status);
                 match res {
@@ -499,7 +533,7 @@ impl Backend for Engine {
         // The query log feeds the report's "queries used"; a logging failure
         // must not fail the query itself.
         let _ = lock(&o.case).log_query(&QueryLogEntry {
-            filter: req.filter.clone(),
+            filter: logged_filter(req),
             view: req.view,
             time_range: req.time_range,
             sql: page.sql.clone(),
@@ -676,4 +710,72 @@ impl Backend for Engine {
 /// Convenience for tools: capture row of the open capture.
 pub fn capture_of(e: &Engine) -> ApiResult<CaptureRow> {
     Ok(e.opened()?.session.capture.clone())
+}
+
+/// The filter as the report shows it: the text the analyst typed, plus the
+/// structured `hosts`/`flow_ids` selection (timeline lanes, brushes, pivots)
+/// written as equivalent filter syntax, so "queries used" states the real scope.
+fn logged_filter(req: &QueryRequest) -> String {
+    let mut parts = Vec::new();
+    if !req.filter.trim().is_empty() {
+        parts.push(format!("({})", req.filter.trim()));
+    }
+    if !req.hosts.is_empty() {
+        let hosts: Vec<String> = req.hosts.iter().map(|h| format!("host {h}")).collect();
+        parts.push(if hosts.len() == 1 {
+            hosts[0].clone()
+        } else {
+            format!("({})", hosts.join(" or "))
+        });
+    }
+    if !req.flow_ids.is_empty() {
+        const SHOWN: usize = 20;
+        let ids: Vec<String> = req
+            .flow_ids
+            .iter()
+            .take(SHOWN)
+            .map(u64::to_string)
+            .collect();
+        let more = req.flow_ids.len().saturating_sub(SHOWN);
+        let tail = if more > 0 {
+            format!(", … {more} more")
+        } else {
+            String::new()
+        };
+        parts.push(format!("flow_id in [{}{tail}]", ids.join(", ")));
+    }
+    if req.hosts.is_empty() && req.flow_ids.is_empty() {
+        return req.filter.clone();
+    }
+    parts.join(" and ")
+}
+
+#[cfg(test)]
+mod logged_filter_tests {
+    use super::*;
+
+    fn req(filter: &str, hosts: &[&str], flow_ids: &[u64]) -> QueryRequest {
+        QueryRequest {
+            filter: filter.into(),
+            view: walleye_core::ipc::View::Flows,
+            time_range: None,
+            hosts: hosts.iter().map(|h| (*h).to_string()).collect(),
+            flow_ids: flow_ids.to_vec(),
+            sort: None,
+            limit: 10,
+            cursor: None,
+        }
+    }
+
+    #[test]
+    fn selection_is_written_into_the_logged_filter() {
+        assert_eq!(logged_filter(&req("dns", &[], &[])), "dns");
+        assert_eq!(logged_filter(&req("", &["10.0.0.5"], &[])), "host 10.0.0.5");
+        assert_eq!(
+            logged_filter(&req("port 80", &["10.0.0.5", "10.0.0.6"], &[3])),
+            "(port 80) and (host 10.0.0.5 or host 10.0.0.6) and flow_id in [3]"
+        );
+        let many: Vec<u64> = (1..=25).collect();
+        assert!(logged_filter(&req("", &[], &many)).ends_with(", 20, … 5 more]"));
+    }
 }

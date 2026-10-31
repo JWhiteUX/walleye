@@ -12,7 +12,9 @@ mod commands;
 use std::{path::PathBuf, sync::Arc};
 
 use tauri::Manager;
-use walleye_core::{Backend, mock::MockBackend};
+use walleye_core::Backend;
+#[cfg(debug_assertions)]
+use walleye_core::mock::MockBackend;
 use walleye_engine::{Engine, EngineConfig};
 
 /// Shared state handed to every command via `tauri::State`.
@@ -36,6 +38,9 @@ fn rules_dir(app: &tauri::App) -> PathBuf {
 }
 
 fn make_backend(app: &tauri::App) -> Result<Arc<dyn Backend>, Box<dyn std::error::Error>> {
+    // The mock backend (invented demo data) exists for UI development only: a
+    // release build ignores WALLEYE_BACKEND and always analyzes real captures.
+    #[cfg(debug_assertions)]
     match std::env::var("WALLEYE_BACKEND").as_deref() {
         Ok("mock") => return Ok(Arc::new(MockBackend::new())),
         Ok("mock-open") => return Ok(Arc::new(MockBackend::preopened())),

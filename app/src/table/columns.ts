@@ -71,7 +71,7 @@ export const COLUMNS: Record<TableView, ColumnSpec[]> = {
     col("query", "Query", 300, str("query"), { field: "dns.query", mono: true }),
     col("qtype", "Type", 64, str("qtype"), { field: "dns.qtype" }),
     col("rcode", "Rcode", 96, str("rcode"), { field: "dns.rcode" }),
-    col("answers", "Answers", 260, (r) => ((r.answers as string[] | undefined) ?? []).join(", "), {
+    col("answers", "Answers", 260, (r) => visible(((r.answers as string[] | undefined) ?? []).join(", ")), {
       field: "dns.answer",
       sortable: false,
       mono: true,

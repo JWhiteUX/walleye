@@ -91,12 +91,12 @@ function QueueView() {
     const seq = (verdictSeq.current.get(f.finding_id) ?? 0) + 1;
     verdictSeq.current.set(f.finding_id, seq);
     setOverrides((o) => ({ ...o, [f.finding_id]: v }));
-    setStatus({ text: `Marked “${f.title}” as ${verdictLabel(v)}.`, error: false });
+    setStatus({ text: `Marked “${visible(f.title)}” as ${verdictLabel(v)}.`, error: false });
     api.setVerdict(f.finding_id, v).catch((e: unknown) => {
       if (verdictSeq.current.get(f.finding_id) !== seq) return; // a newer verdict superseded this one
       setOverrides((o) => ({ ...o, [f.finding_id]: prev }));
       setStatus({
-        text: `Could not save verdict for “${f.title}”: ${e instanceof Error ? e.message : String(e)}. Reverted to ${verdictLabel(prev)}.`,
+        text: `Could not save verdict for “${visible(f.title)}”: ${e instanceof Error ? e.message : String(e)}. Reverted to ${verdictLabel(prev)}.`,
         error: true,
       });
     });
@@ -105,7 +105,7 @@ function QueueView() {
   const pin = useCallback(async (f: Finding) => {
     try {
       await pinEvidence({ kind: "finding", finding_id: f.finding_id });
-      setStatus({ text: `Pinned “${f.title}” to the case.`, error: false });
+      setStatus({ text: `Pinned “${visible(f.title)}” to the case.`, error: false });
     } catch (e) {
       setStatus({ text: `Could not pin: ${e instanceof Error ? e.message : String(e)}`, error: true });
     }
@@ -117,7 +117,7 @@ function QueueView() {
       if (f.entity_type === "host") setHosts([f.entity]);
       const frame = r.evidence.frame_nos[0];
       setStatus({
-        text: `Selected ${evidenceLabel(r.evidence)} for ${f.entity}${frame !== undefined ? `; frame ${frame} opened` : ""}.`,
+        text: `Selected ${evidenceLabel(r.evidence)} for ${visible(f.entity)}${frame !== undefined ? `; frame ${frame} opened` : ""}.`,
         error: false,
       });
     },

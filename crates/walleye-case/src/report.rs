@@ -280,7 +280,7 @@ pub fn build(input: &ReportInput, generated_at: Option<i64>) -> ApiResult<Doc> {
 
     // -- capture header
     b.push(Block::Section(section::CAPTURE));
-    let span = cap.last_ts - cap.first_ts;
+    let span = cap.last_ts.saturating_sub(cap.first_ts);
     b.push(Block::Table {
         header: vec!["Field", "Value"],
         rows: vec![
@@ -696,8 +696,20 @@ pub fn sanitize(s: &str, max_chars: usize) -> String {
             out.push('…');
             break;
         }
+        // Same set as the UI's `visible()` (app/src/shared/format.ts); keep
+        // the two in sync.
         let invisible = c.is_control()
-            || matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{feff}' | '\u{2028}' | '\u{2029}');
+            || matches!(
+                c,
+                '\u{00ad}'
+                    | '\u{061c}'
+                    | '\u{180e}'
+                    | '\u{200b}'..='\u{200f}'
+                    | '\u{2028}'..='\u{202e}'
+                    | '\u{2060}'..='\u{206f}'
+                    | '\u{feff}'
+                    | '\u{fff9}'..='\u{fffb}'
+            );
         if invisible {
             out.push_str(&format!("\\u{{{:x}}}", c as u32));
         } else {

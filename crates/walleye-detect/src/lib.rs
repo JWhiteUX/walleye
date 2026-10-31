@@ -93,7 +93,7 @@ pub fn run(src: &dyn DetectSource, rules: &RuleSet, allow: &Allowlist) -> ApiRes
                     for a in &r.answers {
                         if let Some(id) = hosts.lookup(a) {
                             if names.wants_dst(id) {
-                                names.add(id, &r.query);
+                                names.add_resolved(id, &r.query);
                             }
                         }
                     }
