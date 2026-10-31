@@ -162,7 +162,8 @@ struct Report {
     udp: usize,
     syns: usize,
     fins: usize,
-    dns: Vec<(i64, IpAddr, DnsMsg)>,
+    /// (ts, src, message, dst)
+    dns: Vec<(i64, IpAddr, DnsMsg, IpAddr)>,
     /// (ts, src, dst, sni-bearing ClientHello?) for TLS handshake records.
     client_hellos: Vec<(i64, IpAddr, IpAddr)>,
     certificates: usize,
@@ -271,7 +272,7 @@ fn validate(bytes: &[u8]) -> Report {
                 r.udp += 1;
                 assert_eq!(u.length() as usize, l4.len(), "frame {} UDP len", i + 1);
                 if u.source_port() == 53 || u.destination_port() == 53 {
-                    r.dns.push((p.ts, src, parse_dns(u.payload())));
+                    r.dns.push((p.ts, src, parse_dns(u.payload()), dst));
                 }
             }
             other => panic!("frame {}: unexpected transport {other:?}", i + 1),
@@ -442,8 +443,120 @@ fn scale_stops_at_the_size_budget() {
     assert!(s.bytes >= limit, "{} < {limit}", s.bytes);
     assert!(s.bytes < limit + 70_000, "overshoot {}", s.bytes - limit);
     assert_eq!(s.bytes as usize, out.len());
-    validate(&out);
-    assert_eq!(s.labels.c2_hosts.len(), 3);
+    // Whatever the labels claim at this small size must be in the file.
+    assert_labels_backed_by_traffic(&validate(&out), &s.labels);
+}
+
+/// Count, from the parsed capture, the C2 activity of every labelled host
+/// and assert it meets the thresholds the labels promise. Returns
+/// (host, contacts) for the report.
+fn assert_labels_backed_by_traffic(
+    r: &Report,
+    labels: &walleye_gen::Labels,
+) -> Vec<(String, usize)> {
+    use walleye_gen::scenario::{
+        BEACON_C2_IP, BEACON_HOST, DGA_C2_IP, DGA_HOST, MIN_BEACONS, MIN_DGA_BURSTS,
+        MIN_TUNNEL_QUERIES, TUNNEL_HOST, TUNNEL_ZONE,
+    };
+    let mut out = Vec::new();
+    for h in &labels.c2_hosts {
+        let host: IpAddr = h.parse().expect("c2 host is an IP");
+        let n = if host == IpAddr::V4(BEACON_HOST) {
+            let syns = r
+                .syn_times
+                .get(&(host, IpAddr::V4(BEACON_C2_IP)))
+                .cloned()
+                .unwrap_or_default();
+            for w in syns.windows(2) {
+                let dt = (w[1] - w[0]) as f64 / 1e6;
+                assert!(
+                    (57.0..=63.5).contains(&dt),
+                    "{h}: beacon interval {dt}s outside 60 s ±3% (+DNS lag)"
+                );
+            }
+            assert!(
+                syns.len() >= MIN_BEACONS,
+                "{h}: {} beacon contacts",
+                syns.len()
+            );
+            syns.len()
+        } else if host == IpAddr::V4(TUNNEL_HOST) {
+            let q = r
+                .dns
+                .iter()
+                .filter(|d| d.1 == host && !d.2.response)
+                .filter(|d| d.2.qname.ends_with(&format!(".{TUNNEL_ZONE}")))
+                .count();
+            assert!(q >= MIN_TUNNEL_QUERIES, "{h}: {q} tunnel queries");
+            q
+        } else if host == IpAddr::V4(DGA_HOST) {
+            let nx = r
+                .dns
+                .iter()
+                .filter(|d| d.3 == host && d.2.response && d.2.rcode == 3)
+                .count();
+            // Each burst has >= 24 NXDOMAIN answers (25-60 queries, one resolves).
+            assert!(nx >= 24 * MIN_DGA_BURSTS, "{h}: {nx} NXDOMAIN responses");
+            let c2 = r
+                .syn_times
+                .get(&(host, IpAddr::V4(DGA_C2_IP)))
+                .map_or(0, Vec::len);
+            assert!(c2 >= 1, "{h}: never connected to the DGA C2");
+            nx
+        } else {
+            panic!("label names {h}, which no scenario behaviour uses");
+        };
+        out.push((h.clone(), n));
+    }
+    out
+}
+
+#[test]
+fn every_label_is_backed_by_traffic() {
+    for (scenario, minutes) in [
+        (Scenario::Beacon, 30),
+        (Scenario::DnsTunnel, 30),
+        (Scenario::Dga, 30),
+    ] {
+        let (bytes, s) = gen_bytes(scenario, 1, minutes);
+        assert!(
+            !s.labels.c2_hosts.is_empty(),
+            "{scenario:?} labels no C2 host"
+        );
+        let counts = assert_labels_backed_by_traffic(&validate(&bytes), &s.labels);
+        println!("{scenario:?} {minutes} min: {counts:?}");
+    }
+    // Scale: all three behaviours must be present and labelled.
+    let mut opts = Options::new(Scenario::Scale, 1);
+    opts.size_gb = 0.25;
+    let mut out = Vec::new();
+    let s = generate(&opts, &mut out).expect("generate");
+    let r = validate(&out);
+    let pkts = read_pcap(&out);
+    let span = (pkts.last().map_or(0, |p| p.ts) - pkts[0].ts) as f64 / 1e6;
+    assert_eq!(
+        s.labels.c2_hosts,
+        vec!["10.0.0.23", "10.0.0.17", "10.0.0.12"]
+    );
+    let counts = assert_labels_backed_by_traffic(&r, &s.labels);
+    println!("Scale 0.25 GiB: span {span:.0} s, {counts:?}");
+}
+
+#[test]
+fn tiny_scale_never_claims_missing_behaviour() {
+    // 5 MiB fills in seconds: too short for 10 beacons, so the beacon host
+    // must be dropped from the labels rather than claimed.
+    let mut opts = Options::new(Scenario::Scale, 1);
+    opts.size_gb = 0.005;
+    let mut out = Vec::new();
+    let s = generate(&opts, &mut out).expect("generate");
+    assert!(!s.labels.c2_hosts.contains(&"10.0.0.23".to_string()));
+    assert!(
+        s.labels.notes.contains("10.0.0.23 NOT labelled"),
+        "{}",
+        s.labels.notes
+    );
+    assert_labels_backed_by_traffic(&validate(&out), &s.labels);
 }
 
 #[test]

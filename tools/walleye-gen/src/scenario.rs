@@ -310,6 +310,29 @@ struct World {
     /// Leaf + intermediate per TLS 1.2 site (built once).
     chains: BTreeMap<String, Vec<Vec<u8>>>,
     dga_domain: String,
+    /// Mean seconds between bulk transfers per host (`scale` only), derived
+    /// from the size budget so the capture spans a useful time window.
+    bulk_mean_s: f64,
+    /// Start times of emitted malicious contacts, per behaviour, so labels
+    /// only claim behaviour that actually made it into the file.
+    beacon_starts: Vec<i64>,
+    tunnel_starts: Vec<i64>,
+    dga_bursts: Vec<i64>,
+}
+
+/// Minimum evidence before a host is labelled as C2 (see `labels_for`).
+pub const MIN_BEACONS: usize = 10;
+pub const MIN_TUNNEL_QUERIES: usize = 50;
+pub const MIN_DGA_BURSTS: usize = 2;
+
+/// Rough non-bulk byte rate of the 200-host scale network, bytes/s.
+const SCALE_BACKGROUND_BPS: f64 = 250_000.0;
+/// Mean size of one bulk transfer (video / backup / update mix), bytes.
+const SCALE_BULK_MEAN_BYTES: f64 = 80e6;
+
+/// Capture span the scale scenario aims for: 6 min per GiB, 15 min..2 h.
+pub fn scale_target_span_s(size_gb: f64) -> f64 {
+    (size_gb * 360.0).clamp(900.0, 7200.0)
 }
 
 fn fnv(s: &str) -> u64 {
@@ -418,6 +441,15 @@ impl World {
             end,
             chains: BTreeMap::new(),
             dga_domain,
+            bulk_mean_s: {
+                let budget = opts.size_gb * (1u64 << 30) as f64;
+                let bulk_bps = (budget / scale_target_span_s(opts.size_gb) - SCALE_BACKGROUND_BPS)
+                    .max(50_000.0);
+                f64::from(n_hosts) * SCALE_BULK_MEAN_BYTES / bulk_bps
+            },
+            beacon_starts: Vec::new(),
+            tunnel_starts: Vec::new(),
+            dga_bursts: Vec::new(),
         };
         w.build_chains();
         w.add_sources(opts.scenario, start);
@@ -530,7 +562,9 @@ impl World {
                 }
             }
             if scale {
-                let r = self.rng.uniform(0.0, 1800.0);
+                // Exponential first arrival: uniform-in-30-min front-loaded
+                // every host's transfer and filled 10 GiB in ~17 minutes.
+                let r = self.rng.exp(self.bulk_mean_s);
                 add(self, Kind::Bulk, r);
             }
             let ip = self.hosts[h].ip;
@@ -538,14 +572,21 @@ impl World {
                 add(self, Kind::WsusPeriodic, 95.0);
             }
             let malicious = |s: Scenario| scale || scenario == s;
+            // Small scenarios start the behaviour after some benign lead-in;
+            // scale's span depends on the size budget, so start right away.
+            let (b0, t0, d0) = if scale {
+                (5.0, 40.0, 20.0)
+            } else {
+                (1020.0, 900.0, 600.0)
+            };
             if ip == BEACON_HOST && malicious(Scenario::Beacon) {
-                add(self, Kind::Beacon, 1020.0);
+                add(self, Kind::Beacon, b0);
             }
             if ip == TUNNEL_HOST && malicious(Scenario::DnsTunnel) {
-                add(self, Kind::Tunnel, 900.0);
+                add(self, Kind::Tunnel, t0);
             }
             if ip == DGA_HOST && malicious(Scenario::Dga) {
-                add(self, Kind::Dga, 600.0);
+                add(self, Kind::Dga, d0);
             }
         }
     }
@@ -1303,7 +1344,7 @@ impl World {
                 );
             }
         }
-        t + (self.rng.exp(60.0 * 60.0) * S as f64) as i64 + 1
+        t + (self.rng.exp(self.bulk_mean_s) * S as f64) as i64 + 1
     }
 
     fn ntp(&mut self, h: usize, server: IpAddr, t: i64) {
@@ -1344,6 +1385,7 @@ impl World {
         let n = self.sources[i].n;
         self.sources[i].n += 1;
         let (t1, dst) = self.resolve(h, BEACON_C2_NAME, t);
+        self.beacon_starts.push(t1);
         let req = self.rng.range(180, 420);
         let resp = if n % 15 == 7 {
             self.rng.range(2_000, 20_000)
@@ -1405,6 +1447,7 @@ impl World {
         }];
         let lat = self.rng.range(20 * MS, 90 * MS);
         self.dns_exchange(h, t, &qname, qtype, 0, &ans, &[], lat);
+        self.tunnel_starts.push(t);
         if self.sources[i].burst_left == 0 {
             t + (self.rng.exp(8.0 * 60.0) * S as f64) as i64 + 30 * S
         } else {
@@ -1413,6 +1456,9 @@ impl World {
     }
 
     fn dga(&mut self, h: usize, t: i64) {
+        // A burst counts once its last query is on the wire (see labels_for);
+        // its first query goes out ≥ 30 ms after `t`.
+        self.dga_bursts.push(t);
         let n = self.rng.range(25, 60);
         let win_at = self.rng.below(n);
         let tlds = ["com", "net", "org", "info", "biz", "ru", "top", "xyz"];
@@ -1464,7 +1510,7 @@ impl World {
     }
 }
 
-fn labels_for(opts: &Options, world: &World, sha256: String) -> Labels {
+fn labels_for(opts: &Options, world: &World, sha256: String, last_ts: i64) -> Labels {
     let source = format!(
         "walleye-gen seed={} scenario={}",
         opts.seed,
@@ -1518,17 +1564,66 @@ fn labels_for(opts: &Options, world: &World, sha256: String) -> Labels {
             ],
             false,
             format!(
-                "scale: 200 hosts, bulk video/backup/update transfers, plus the beacon, DNS tunnel and DGA behaviours; target {} GiB. {fp}",
+                "scale: 200 hosts, bulk video/backup/update transfers, plus the beacon, DNS tunnel and DGA behaviours from the first minute; target {} GiB. {fp}",
                 opts.size_gb
             ),
         ),
+    };
+    // Only claim a C2 host when its behaviour is actually in the file.
+    // (`scale` stops at a byte budget, which once cut the beacon off.)
+    let done =
+        |starts: &[i64], tail_us: i64| starts.iter().filter(|&&s| s + tail_us <= last_ts).count();
+    let checks = [
+        (
+            BEACON_HOST,
+            done(&world.beacon_starts, 2 * S),
+            MIN_BEACONS,
+            "beacon contacts",
+            &[BEACON_C2_IP.to_string(), BEACON_C2_NAME.to_string()][..],
+        ),
+        (
+            TUNNEL_HOST,
+            done(&world.tunnel_starts, S / 10),
+            MIN_TUNNEL_QUERIES,
+            "tunnel queries",
+            &[TUNNEL_ZONE.to_string(), "exfil-dns.xyz".to_string()][..],
+        ),
+        (
+            DGA_HOST,
+            done(&world.dga_bursts, 15 * S),
+            MIN_DGA_BURSTS,
+            "DGA bursts",
+            &[world.dga_domain.clone(), DGA_C2_IP.to_string()][..],
+        ),
+    ];
+    let mut c2_kept = Vec::new();
+    let mut bad_kept = Vec::new();
+    let mut evidence = Vec::new();
+    for (host, n, min, what, dests) in checks {
+        if !c2.contains(&host.to_string()) {
+            continue;
+        }
+        if n >= min {
+            c2_kept.push(host.to_string());
+            bad_kept.extend(dests.iter().filter(|d| bad.contains(d)).cloned());
+            evidence.push(format!("{host}: {n} {what}"));
+        } else {
+            evidence.push(format!(
+                "{host} NOT labelled: only {n} {what} in the capture (need {min})"
+            ));
+        }
+    }
+    let notes = if evidence.is_empty() {
+        notes
+    } else {
+        format!("{notes} Emitted: {}.", evidence.join("; "))
     };
     Labels {
         scenario: opts.scenario.name().to_string(),
         source,
         sha256,
-        c2_hosts: c2,
-        bad_destinations: bad,
+        c2_hosts: c2_kept,
+        bad_destinations: bad_kept,
         benign,
         notes,
     }
@@ -1571,8 +1666,9 @@ pub fn generate<W: Write>(opts: &Options, out: W) -> io::Result<Summary> {
             sim.add(f);
         }
     }
+    let last_ts = sim.last_ts();
     let (bytes, packets, sha256) = sim.writer.finish()?;
-    let labels = labels_for(opts, &world, sha256.clone());
+    let labels = labels_for(opts, &world, sha256.clone(), last_ts);
     Ok(Summary {
         bytes,
         packets,
