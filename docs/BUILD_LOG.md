@@ -8,3 +8,4 @@ One line per agent dispatch, report and gate result. Numbers come from command o
 | 2026-10-30 | 0 | Lead | Disk check | Finder free (incl. purgeable) 180.08 GB (≥ 60 OK); `df` avail 51 GiB (≥ 40 OK). No warning needed. |
 | 2026-10-31 | 0 | Lead | Contracts + skeleton | `walleye-core` (tables, findings, IPC, sink traits, rules, allowlist, field registry, mock backend), Tauri shell with 20 commands on the mock, React shell + shared selection/IPC/mock, docs. |
 | 2026-10-31 | 0 | Lead | **Gate 0** `scripts/check.sh` | **PASS** — fmt ok; clippy -D warnings ok; cargo test 65 passed (walleye-core); bindings ok; eslint+tsc ok; Vitest 2 files / 7 tests passed. Also: `pnpm build` ok, `pnpm e2e` 1 passed. |
+| 2026-10-31 | 1 | Lead | Dispatch A–H (one message, `isolation: worktree`, base f063c4e) | Rust-heavy agents A, B, C, F, G use their own `target/`; UI agents D, E and reviewer H share the lead's `target/` via `CARGO_TARGET_DIR` to save ~10 GB. df at dispatch: 47 GiB. |
