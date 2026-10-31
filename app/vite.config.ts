@@ -12,7 +12,7 @@ export default defineConfig({
   clearScreen: false,
   server: {
     // Tauri's devUrl (src-tauri/tauri.conf.json) expects exactly this port.
-    port: 1420,
+    port: Number(process.env.WALLEYE_VITE_PORT ?? 1420),
     strictPort: true,
     host: host || false,
     hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,

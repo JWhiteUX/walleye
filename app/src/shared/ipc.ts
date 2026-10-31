@@ -53,11 +53,37 @@ function asApiError(e: unknown): ApiError {
 
 type Args = Record<string, unknown>;
 
+/**
+ * DEV/TEST ONLY: `?bridge=http://127.0.0.1:<port>&token=<t>` routes calls to
+ * tools/walleye-devbridge (the real engine over loopback) instead of the
+ * browser mock, so Playwright can exercise the real backend. Ignored inside
+ * Tauri and in production builds.
+ */
+function devBridge(): { url: string; token: string } | null {
+  if (!import.meta.env.DEV || typeof window === "undefined") return null;
+  const q = new URLSearchParams(window.location.search);
+  const url = q.get("bridge");
+  const token = q.get("token");
+  if (!url || !token || !/^http:\/\/127\.0\.0\.1:\d+$/.test(url)) return null;
+  return { url, token };
+}
+
 async function call<T>(cmd: string, args: Args = {}): Promise<T> {
   try {
     if (isTauri()) {
       const { invoke } = await import("@tauri-apps/api/core");
       return await invoke<T>(cmd, args);
+    }
+    const bridge = devBridge();
+    if (bridge) {
+      const r = await fetch(`${bridge.url}/invoke/${cmd}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${bridge.token}`, "content-type": "application/json" },
+        body: JSON.stringify(args),
+      });
+      const body: unknown = await r.json();
+      if (!r.ok) throw body;
+      return body as T;
     }
     const { mockInvoke } = await import("./mock");
     return (await mockInvoke(cmd, args)) as T;
@@ -104,7 +130,11 @@ export const api = {
 
 /** Native file picker in Tauri; in the browser mock, a fixed fake path. */
 export async function pickCaptureFile(): Promise<string | null> {
-  if (!isTauri()) return "/mock/office-beacon.pcap";
+  if (!isTauri()) {
+    // Dev bridge: the capture to open comes from `?capture=<absolute path>`.
+    if (devBridge()) return new URLSearchParams(window.location.search).get("capture");
+    return "/mock/office-beacon.pcap";
+  }
   const { open } = await import("@tauri-apps/plugin-dialog");
   const picked = await open({
     multiple: false,

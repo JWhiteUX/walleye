@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "lint": "eslint . --max-warnings 0 && tsc -b --noEmit",
     "test": "vitest run",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "e2e:real": "playwright test -c playwright.real.config.ts"
   },
   "dependencies": {
     "@tanstack/react-table": "^8.21.3",

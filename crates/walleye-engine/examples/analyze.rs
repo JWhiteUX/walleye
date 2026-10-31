@@ -14,7 +14,9 @@ use walleye_core::ipc::IngestPhase;
 use walleye_engine::{Engine, EngineConfig};
 
 fn dir_size(p: &std::path::Path) -> u64 {
-    let Ok(rd) = std::fs::read_dir(p) else { return 0 };
+    let Ok(rd) = std::fs::read_dir(p) else {
+        return 0;
+    };
     rd.flatten()
         .map(|e| match e.metadata() {
             Ok(m) if m.is_dir() => dir_size(&e.path()),
@@ -41,16 +43,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     let total = t0.elapsed().as_secs_f64();
     let cap = &session.capture;
-    println!("capture: {} ({} bytes, {} frames)", cap.path, cap.size_bytes, cap.frame_count);
+    println!(
+        "capture: {} ({} bytes, {} frames)",
+        cap.path, cap.size_bytes, cap.frame_count
+    );
     println!("sha256: {}", cap.sha256);
     let mut prev = 0.0;
     for (ph, t) in marks.iter().skip(1) {
-        println!("  phase {ph:?} started at {t:.2}s (previous phase {:.2}s)", t - prev);
+        println!(
+            "  phase {ph:?} started at {t:.2}s (previous phase {:.2}s)",
+            t - prev
+        );
         prev = *t;
     }
-    let idx_dir = PathBuf::from(data).join("captures").join(&cap.capture_id).join("index");
+    let idx_dir = PathBuf::from(data)
+        .join("captures")
+        .join(&cap.capture_id)
+        .join("index");
     let idx = dir_size(&idx_dir);
-    println!("total: {total:.2}s  ->  {:.1} MB/s overall", cap.size_bytes as f64 / 1e6 / total);
+    println!(
+        "total: {total:.2}s  ->  {:.1} MB/s overall",
+        cap.size_bytes as f64 / 1e6 / total
+    );
     println!(
         "index: {} bytes = {:.2}% of raw",
         idx,
