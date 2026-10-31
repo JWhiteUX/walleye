@@ -69,7 +69,8 @@ impl Engine {
             direction,
             tcp_flags,
             payload_len,
-            link_type: Some(link_type),
+            // Unknown interface (bad pcapng id): NULL, not a sentinel.
+            link_type: (link_type != crate::capture::LINKTYPE_UNKNOWN).then_some(link_type),
         });
         self.table.maybe_sweep(ts, &mut self.out);
     }
