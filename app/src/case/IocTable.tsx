@@ -2,7 +2,7 @@
 import { useId, useMemo, useState } from "react";
 import type { Ioc } from "../shared/bindings/Ioc";
 import type { IocType } from "../shared/bindings/IocType";
-import { formatTs } from "../shared/format";
+import { formatTs, visible } from "../shared/format";
 import { useSelection } from "../shared/selection";
 import { evidenceCount, hasEvidence, IOC_TYPE_LABEL, IOC_TYPES } from "./describe";
 
@@ -67,7 +67,7 @@ export function IocTable({ iocs, onPin, busy }: Props) {
                 <tr key={i.ioc_id} data-testid="ioc-row" data-ioc-type={i.type}>
                   <td>{IOC_TYPE_LABEL[i.type]}</td>
                   <td>
-                    <code className="wl-mono wl-case-value">{i.defanged}</code>
+                    <code className="wl-mono wl-case-value">{visible(i.defanged)}</code>
                   </td>
                   <td className="wl-mono">{formatTs(i.first_seen)}</td>
                   <td>

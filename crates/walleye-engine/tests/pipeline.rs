@@ -147,6 +147,37 @@ fn beacon_capture_end_to_end() {
     .expect("read");
     assert!(pdf.starts_with(b"%PDF"));
 
+    // Hostile IPC arguments (security review) return errors, never panic or
+    // escape the data dir.
+    for bad in ["../../../../tmp/x", "", "0123456789abcdef"] {
+        assert!(engine.export_iocs(bad, IocFormat::Csv).is_err(), "{bad:?}");
+        assert!(
+            engine
+                .export_report(bad, ReportFormat::Markdown, None)
+                .is_err()
+        );
+    }
+    for (start, end, bucket_ms) in [(i64::MIN, i64::MAX, 1), (10, 5, 1000), (0, 1, u64::MAX)] {
+        let r = engine.timeline(&TimelineRequest {
+            filter: String::new(),
+            time_range: Some(walleye_core::ipc::TimeRange { start, end }),
+            bucket_ms,
+            max_lanes: 5,
+        });
+        let _ = r; // error or empty lanes are both fine; a panic is not
+    }
+    let q = engine.query(&QueryRequest {
+        filter: String::new(),
+        view: View::Flows,
+        time_range: None,
+        hosts: vec![],
+        flow_ids: vec![],
+        sort: None,
+        limit: 10,
+        cursor: Some("18446744073709551615".into()),
+    });
+    let _ = q;
+
     // Re-opening the same capture reuses the index (no re-ingest).
     let mut saw_indexing = false;
     engine
@@ -157,6 +188,37 @@ fn beacon_capture_end_to_end() {
     assert!(!saw_indexing, "complete index must be reused");
     // Verdicts and pins survive.
     assert_eq!(engine.get_case(&case_id).expect("case").pins.len(), 1);
+}
+
+#[test]
+fn old_format_index_is_rebuilt() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let (pcap, _) = make_capture(tmp.path(), Scenario::Beacon, 10);
+    let data = tmp.path().join("data");
+    let engine = Engine::new(EngineConfig::new(&data, rules_dir())).expect("engine");
+    let cancel = AtomicBool::new(false);
+    let s = engine
+        .open_blocking(pcap.to_str().expect("utf8"), &cancel, &mut |_| {})
+        .expect("open");
+    let n_findings = engine.findings(None).expect("findings").len();
+    let manifest = data
+        .join("captures")
+        .join(&s.capture.capture_id)
+        .join("index/manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest).expect("read")).expect("json");
+    m["version"] = serde_json::json!(1);
+    std::fs::write(&manifest, serde_json::to_vec(&m).expect("ser")).expect("write");
+
+    let mut rebuilt = false;
+    let s2 = engine
+        .open_blocking(pcap.to_str().expect("utf8"), &cancel, &mut |p| {
+            rebuilt |= p.phase == walleye_core::ipc::IngestPhase::Indexing
+        })
+        .expect("reopen old-format index");
+    assert!(rebuilt, "old-format index must be rebuilt");
+    assert_eq!(s2.capture.frame_count, s.capture.frame_count);
+    assert_eq!(engine.findings(None).expect("findings").len(), n_findings);
 }
 
 #[test]

@@ -5,7 +5,7 @@ import type { FileRow } from "../shared/bindings/FileRow";
 import type { FlowRow } from "../shared/bindings/FlowRow";
 import type { HttpRow } from "../shared/bindings/HttpRow";
 import type { TlsRow } from "../shared/bindings/TlsRow";
-import { formatBytes, formatDuration, formatTs, protoName } from "../shared/format";
+import { formatBytes, formatDuration, formatTs, protoName, visible } from "../shared/format";
 import type { TableView } from "./store";
 
 export type AnyRow = FlowRow | DnsRow | HttpRow | TlsRow | FileRow;
@@ -25,7 +25,7 @@ export interface ColumnSpec {
 
 const str = (k: string) => (r: Record<string, unknown>) => {
   const v = r[k];
-  return v === null || v === undefined ? "" : String(v);
+  return v === null || v === undefined ? "" : visible(String(v));
 };
 const num = str;
 const bytes = (k: string) => (r: Record<string, unknown>) => (typeof r[k] === "number" ? formatBytes(r[k] as number) : "");

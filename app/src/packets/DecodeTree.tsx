@@ -2,6 +2,7 @@
 // Labels and values come from a hostile capture: text only.
 import { useEffect, useId, useMemo, useRef, type KeyboardEvent } from "react";
 import type { FlatNode, NodeId } from "./hex";
+import { visible as showInvisible } from "../shared/format";
 
 export interface DecodeTreeProps {
   flat: FlatNode[];
@@ -149,7 +150,7 @@ export function DecodeTree({ flat, expanded, selected, onSelect, onToggle }: Dec
             >
               {kids ? (open ? "▾" : "▸") : ""}
             </span>
-            <span className="wl-tree-label">{f.node.label}</span>
+            <span className="wl-tree-label">{showInvisible(f.node.label)}</span>
             {f.node.warning && (
               <span className="wl-tree-warn">
                 {" "}

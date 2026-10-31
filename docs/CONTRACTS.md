@@ -40,7 +40,7 @@ One Parquet dataset per table, row groups sorted by time, exposed as a DuckDB vi
 | Table | Struct | Key columns | Notes |
 |---|---|---|---|
 | `captures` | `CaptureRow` | `capture_id` | `capture_id, path, sha256, size_bytes, format, first_ts, last_ts, link_type, frame_count` |
-| `frames` | `FrameRow` | `frame_no` | `frame_no, ts, file_offset, caplen, wirelen, flow_id?, direction?, tcp_flags?, payload_len`. `file_offset` points at the packet **data** (after the record header). |
+| `frames` | `FrameRow` | `frame_no` | `frame_no, ts, file_offset, caplen, wirelen, flow_id?, direction?, tcp_flags?, payload_len, link_type?`. `file_offset` points at the packet **data** (after the record header). `link_type` is per frame (pcapng interfaces can differ); `null` = unknown, use the capture's. |
 | `flows` | `FlowRow` | `flow_id` | `flow_id, ts_start, ts_end, src_ip, src_port, dst_ip, dst_port, proto, app_proto?, bytes_up, bytes_down, pkts_up, pkts_down, first_frame, last_frame`. `src` = initiator (SYN sender, else first packet). `bytes_*` count transport payload bytes. |
 | `dns` | `DnsRow` | `(flow_id, frame_no)` | `ts, flow_id, frame_no, trans_id, is_response, query, qtype, rcode?, answers LIST<VARCHAR>, ttl?`. One row per DNS message. `query` lowercase, no trailing dot. `qtype`/`rcode` are mnemonics or `TYPE<n>`/`RCODE<n>`. |
 | `http` | `HttpRow` | `(flow_id, frame_no)` | `ts, flow_id, frame_no, method?, host?, uri?, user_agent?, status?, resp_frame_no?, req_bytes, resp_bytes`. One row per request, paired with its response in order. |
@@ -83,11 +83,19 @@ All commands are `async`, take snake_case argument names (`#[tauri::command(rena
 | `get_case` | `case_id` | `Case {case_id, capture, pins, verdicts, queries}` |
 | `case_pin` | `case_id, evidence: EvidenceRef, note` | `Pin {pin_id, evidence, note, resolved: Evidence, created_at}`. `EvidenceRef` is tagged by `kind`: `frame{frame_no}`, `flow{flow_id}`, `finding{finding_id}`, `ioc{ioc_id}`, `query{filter, view, time_range}`, `note`. The backend resolves it to frames at pin time. |
 | `case_unpin` | `case_id, pin_id` | `null` |
+| `case_update_note` | `case_id, pin_id, note` | `Pin` with the new note (≤ 16 KiB). |
 | `export_report` | `case_id, format: "markdown" \| "pdf", timeline_png_base64?` | absolute path inside `<case>/exports/` |
 
 `ApiError {code, message, span?}`. `code`: `invalid_filter` (with `span` into the filter text), `invalid_argument`, `not_found`, `no_capture`, `bad_capture`, `io`, `cancelled`, `internal`. Messages never contain raw capture bytes.
 
-The backend logs every `query` call into the open case (`Case.queries`), so reports can list the queries used.
+The backend logs every `query` call into the open case (`Case.queries`, newest 10 000 kept), so reports can list the queries used.
+
+**Argument validation (security review, all backends):**
+- `case_id` must equal the open session's `case_id`, else `not_found`. File paths are built from the session, never from an argument, and always land under `<data_dir>`.
+- `open_capture.path` must canonicalize to a non-empty regular file (no FIFOs, devices or directories), else `bad_capture`.
+- `time_range` must have `end > start`; arithmetic on hostile ranges and `bucket_ms` is checked or saturating, never wrapping. Invalid → `invalid_argument`.
+- Size caps: `note` 16 KiB, `timeline_png_base64` (decoded PNG cap in walleye-case), saved-query filter 4 KiB and 500 saved queries, `hosts` 1 000, `flow_ids` 10 000, `cursor` 16 KiB.
+- A panic inside a command is a bug, but it must not take the app down: release builds use `panic = "unwind"`, so `spawn_blocking` turns it into `internal` (D21).
 
 **Adding a command** touches four places, in this order: `Backend` trait → `MockBackend` → `commands.rs` (+ `handler()`) → `ipc.ts` (+ `mock.ts`). Only the lead does this.
 
@@ -182,6 +190,13 @@ Semantics:
 - Type errors (`bytes_up ~ "x"`, `src_ip > 5`, unknown field) are `invalid_filter` errors with a `span`.
 - Fields of another table reach the queried view via `flow_id`: on `flows`, `dns.query ~ "*.top"` → `flow_id IN (SELECT flow_id FROM dns WHERE query ILIKE ?)`; on `dns`, `bytes_up > 1MB` → `flow_id IN (SELECT flow_id FROM flows WHERE (bytes_up) > ?)`. `frames` fields only apply on the `frames` view.
 - Limits: 4 KiB of text, nesting depth 64, 256 terms. Over limit → `invalid_filter`.
+
+SQL inputs outside the filter text follow the same rule (agreed with Agent B):
+- `sort.column` is matched against the view's static column list and the matched static name is used; unknown → `invalid_argument`. Rows are ordered by the sort column, then the view's key columns, then every other scalar column, so order is total and paging is stable.
+- `cursor` is opaque (base64url JSON, ≤ 16 KiB): a keyset on `(sort value, keys)` plus a tie-skip count, bound to the query it came from by a hash of `(filter, view, time_range, hosts, flow_ids, sort)`. A cursor from another query, or a malformed one, is `invalid_argument`. All cursor values are bound parameters.
+- `hosts[]` must parse as IP addresses or CIDRs (IPv6 networks larger than 10 000 addresses are rejected); `flow_ids[]` are integers. Both are bound parameters.
+- `FindingsFilter` strings are bound parameters.
+- DuckDB is hardened on every connection: extension autoinstall/autoload off, community extensions off, `allowed_directories` = the index dir, `enable_external_access = false`, then `lock_configuration = true`.
 
 Example: `host 10.0.0.5 and dns.query ~ "*.top" and bytes_up > 1MB and not app_proto == tls`.
 
@@ -297,7 +312,8 @@ Saved queries are app-level (not per case) and stored by `app/src-tauri` in `<da
   captures/<capture_id>/
     capture.json                 # CaptureRow
     index/                       # owned by walleye-index
-      checkpoint.json            # last accepted Checkpoint (state base64)
+      checkpoint.json            # last accepted Checkpoint (state base64); removed when complete
+      manifest.json              # written last: capture row + file list; its presence = index complete
       frames/ flows/ dns/ http/ tls/ files/ findings/ iocs/   # *.parquet
     case/                        # owned by walleye-case
       case.sqlite
@@ -305,6 +321,10 @@ Saved queries are app-level (not per case) and stored by `app/src-tauri` in `<da
 ```
 
 Captures are never copied, modified or written next to. Open them read-only.
+
+`FORMAT_VERSION` (walleye-index) is 2 (frames gained `link_type`). `Index::open` returns `not_found` for an index with another version or without `manifest.json`, and the engine rebuilds it from the capture.
+
+**Report links.** Markdown reports cite evidence as `[frames 41, 57, 63](walleye://sha256/<capture sha256>/frames/41,57,63)` (and `…/flows/3,4`). The app does not register the `walleye://` scheme in the MVP, so a link is a stable identifier that carries the capture hash, not a live URL. `report-timeline.png` is written next to the report when the UI supplies a snapshot.
 
 ## 9. Fixtures, labels, bench, eval (Agent G)
 

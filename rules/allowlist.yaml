@@ -12,7 +12,9 @@
 #   blob.core.windows.net, ...): attackers host C2 there.
 # * CDN edge names below are CNAME targets of the CDN itself. Multi-tenant
 #   CDNs can still carry attacker content (domain fronting), which is why
-#   allowlisted IOCs are flagged, never dropped.
+#   allowlisted IOCs are flagged, never dropped. cloudfront.net and fastly.net
+#   are deliberately absent: anyone can create a distribution there (*.cloudfront.net
+#   names are customer-chosen), and both are documented C2 front ends.
 # * CIDRs only where the vendor owns the whole block or for single,
 #   well-known resolver addresses. No cloud-provider ranges.
 # * JA4 is empty on purpose: common client fingerprints are shared by malware
@@ -86,8 +88,6 @@ domains:
   - { suffix: pool.ntp.org, reason: "NTP pool" }
   # CDN edge names (see policy above)
   - { suffix: akamaiedge.net, reason: "Akamai CDN" }
-  - { suffix: cloudfront.net, reason: "Amazon CloudFront CDN" }
-  - { suffix: fastly.net, reason: "Fastly CDN" }
 cidrs:
   - { cidr: 13.107.4.50/32, reason: "Microsoft" }
   - { cidr: 17.0.0.0/8, reason: "Apple" }

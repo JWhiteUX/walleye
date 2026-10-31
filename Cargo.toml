@@ -49,7 +49,10 @@ dbg_macro = "deny"
 codegen-units = 1
 lto = true
 opt-level = 3
-panic = "abort"
+# unwind, not abort: a panic in a command (e.g. a parser bug on a hostile
+# capture) becomes an `internal` error from spawn_blocking instead of killing
+# the app (security review, D21).
+panic = "unwind"
 strip = true
 
 # Fast-enough debug builds for parsers and DuckDB-heavy tests.

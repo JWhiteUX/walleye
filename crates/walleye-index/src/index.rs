@@ -258,9 +258,13 @@ impl Index {
         let manifest: Manifest = serde_json::from_slice(&bytes)
             .map_err(|e| ApiError::internal(format!("manifest: {e}")))?;
         if manifest.version != crate::writer::FORMAT_VERSION {
-            return Err(ApiError::internal(
-                "index format version mismatch; re-index the capture",
-            ));
+            // `not_found` = "no usable index": callers rebuild it from the
+            // capture, as for a missing or incomplete one (CONTRACTS §8).
+            return Err(ApiError::not_found(format!(
+                "index format version {} is not {}; rebuilding",
+                manifest.version,
+                crate::writer::FORMAT_VERSION
+            )));
         }
         let dir = fs::canonicalize(index_dir).map_err(|e| io_ctx("index dir", e))?;
         let conn = Connection::open_in_memory().map_err(db)?;

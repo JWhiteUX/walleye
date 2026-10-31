@@ -85,6 +85,11 @@ async function call<T>(cmd: string, args: Args = {}): Promise<T> {
       if (!r.ok) throw body;
       return body as T;
     }
+    // The browser mock is for development and tests only. A production build
+    // outside Tauri fails closed instead of showing invented findings.
+    if (!import.meta.env.DEV && import.meta.env.MODE !== "test") {
+      throw { code: "internal", message: "Walleye must run inside the desktop app.", span: null };
+    }
     const { mockInvoke } = await import("./mock");
     return (await mockInvoke(cmd, args)) as T;
   } catch (e) {

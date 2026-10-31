@@ -19,7 +19,14 @@ params:
   max_payload_cv: 1.0
   ignore_dst_ports: [53, 67, 68, 123, 137, 138, 1900, 5353, 5355]  # DNS, DHCP, NTP, NetBIOS, SSDP, mDNS, LLMNR
   allowlist_factor: 0.25  # rules/allowlist.yaml match (IP, or a DNS/SNI/Host name of the IP)
-  known_good_factor: 0.35 # destination name under known_good_suffixes (default list in code)
+  known_good_factor: 0.35 # destination name under known_good_suffixes
+  # Vendor apex domains: a weaker, beacon-only down-weight than rules/allowlist.yaml
+  # (which lists only specific update/telemetry hosts, x0.25, and also flags IOCs).
+  # An allowlist match wins; this list applies only when none matched. Never add
+  # namespaces where anyone can get a subdomain (see allowlist.yaml policy).
+  known_good_suffixes: [microsoft.com, windows.com, msftncsi.com, apple.com, icloud.com,
+    google.com, googleapis.com, gstatic.com, ubuntu.com, canonical.com,
+    mozilla.com, mozilla.net, mozilla.org]
   prevalence_min_hosts: 3 # destination shared by >= max(3, 30% of internal hosts) = fleet software
   prevalence_ratio: 0.3
   prevalence_factor: 0.3

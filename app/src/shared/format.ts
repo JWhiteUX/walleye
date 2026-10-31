@@ -41,3 +41,14 @@ export const protoName = (p: number): string => PROTO[p] ?? `IP/${p}`;
 export function defang(v: string): string {
   return v.replace(/^http/i, "hxxp").replace(/\./g, "[.]");
 }
+
+/**
+ * Make invisible and direction-changing characters visible, so a hostile
+ * capture can't spoof an indicator (e.g. a U+202E right-to-left override in a
+ * domain). Control, zero-width, bidi and BOM characters become `\u{xxxx}`.
+ */
+// eslint-disable-next-line no-control-regex
+const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb]/g;
+export function visible(v: string): string {
+  return v.replace(INVISIBLE, (c) => `\\u{${c.codePointAt(0)!.toString(16)}}`);
+}

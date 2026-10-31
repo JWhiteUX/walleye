@@ -525,7 +525,7 @@ impl Backend for MockBackend {
                 .map_err(|_| ApiError::new(ErrorCode::InvalidArgument, "bad cursor"))?,
             None => 0,
         };
-        let end = (offset + req.limit as usize).min(total);
+        let end = offset.saturating_add(req.limit as usize).min(total);
         let page: Vec<Value> = rows
             .get(offset.min(total)..end)
             .map(<[Value]>::to_vec)
@@ -556,11 +556,18 @@ impl Backend for MockBackend {
         let cap = &self.data.capture;
         let range = req.time_range.unwrap_or(TimeRange {
             start: cap.first_ts,
-            end: cap.last_ts + 1,
+            end: cap.last_ts.saturating_add(1),
         });
-        let span_ms = ((range.end - range.start).max(1) as u64).div_ceil(1000);
+        if range.end <= range.start {
+            return Err(ApiError::new(
+                ErrorCode::InvalidArgument,
+                "time_range end must be after start",
+            ));
+        }
+        let span_ms = range.end.abs_diff(range.start).div_ceil(1000);
         let bucket_ms = req.bucket_ms.max(1).max(span_ms.div_ceil(2000));
-        let bucket_us = bucket_ms as i64 * 1000;
+        let bucket_us = i64::try_from(bucket_ms.saturating_mul(1000))
+            .map_err(|_| ApiError::new(ErrorCode::InvalidArgument, "bucket_ms too large"))?;
         let mut per_host: HashMap<&str, BTreeMap<i64, crate::ipc::Bucket>> = HashMap::new();
         let mut totals: HashMap<&str, u64> = HashMap::new();
         for f in &self.data.flows {
@@ -573,7 +580,10 @@ impl Backend for MockBackend {
             {
                 continue;
             }
-            let t = range.start + (f.ts_start - range.start) / bucket_us * bucket_us;
+            // i128: a hostile range (start = i64::MIN) must not overflow.
+            let off = (i128::from(f.ts_start) - i128::from(range.start)) / i128::from(bucket_us)
+                * i128::from(bucket_us);
+            let t = i64::try_from(i128::from(range.start) + off).unwrap_or(f.ts_start);
             let b = per_host
                 .entry(&f.src_ip)
                 .or_default()
@@ -1085,5 +1095,35 @@ mod tests {
         let j = m.open_capture("/x.pcap").expect("job");
         let s = m.ingest_status(&j).expect("status");
         assert_ne!(s.phase, IngestPhase::Done);
+    }
+
+    /// Agent H reproducers (fuzz/repro/core_mock_backend; byte 0 selects the
+    /// command in the fuzz target): both used to panic.
+    #[test]
+    fn hostile_cursor_and_time_range_do_not_panic() {
+        let m = open();
+        for repro in [
+            include_str!("../../../fuzz/repro/core_mock_backend/query-cursor-overflow.bin"),
+            include_str!("../../../fuzz/repro/core_mock_backend/timeline-range-overflow.bin"),
+        ] {
+            let args: serde_json::Value =
+                serde_json::from_str(&repro[1..]).unwrap_or_else(|e| panic!("{e}: {repro:?}"));
+            let cmd = if args["req"].get("view").is_some() {
+                "query"
+            } else {
+                "timeline"
+            };
+            let _ = crate::backend::dispatch(&m, cmd, args);
+        }
+        let req = TimelineRequest {
+            filter: String::new(),
+            time_range: Some(TimeRange { start: 5, end: 5 }),
+            bucket_ms: u64::MAX,
+            max_lanes: 1,
+        };
+        assert_eq!(
+            m.timeline(&req).map_err(|e| e.code).err(),
+            Some(ErrorCode::InvalidArgument)
+        );
     }
 }

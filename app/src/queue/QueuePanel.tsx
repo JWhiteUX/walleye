@@ -11,7 +11,7 @@ import type { Verdict } from "../shared/bindings/Verdict";
 import { pinEvidence } from "../shared/caseEvents";
 import { type Command, useRegisterCommands } from "../shared/commands";
 import { scoreBand } from "../shared/encoding";
-import { formatTime } from "../shared/format";
+import { formatTime, visible } from "../shared/format";
 import { api, WalleyeError } from "../shared/ipc";
 import { useSelection } from "../shared/selection";
 import { useSession } from "../shared/session";
@@ -295,9 +295,9 @@ function QueueView() {
                     <span className={`wl-q-band wl-q-band-${band.label.toLowerCase()}`}>{band.label}</span>
                   </span>
                   <span className="wl-q-main">
-                    <span className="wl-q-ftitle">{f.title}</span>
+                    <span className="wl-q-ftitle">{visible(f.title)}</span>
                     <span className="wl-q-meta">
-                      <span className="wl-mono">{f.entity}</span>
+                      <span className="wl-mono">{visible(f.entity)}</span>
                       {f.attack_technique && (
                         <>
                           {" · "}
@@ -343,7 +343,7 @@ function QueueView() {
                     <ol className="wl-q-reasons" aria-label="Reasons">
                       {f.reasons.map((r, ri) => (
                         <li key={`${r.rule_id}-${r.signal}-${ri}`} className="wl-q-reason">
-                          <p className="wl-q-expl">{r.explanation}</p>
+                          <p className="wl-q-expl">{visible(r.explanation)}</p>
                           <p className="wl-q-rmeta">
                             <span>
                               {r.signal}: <span className="wl-mono">{formatValue(r.value, r.unit)}</span>
