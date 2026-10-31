@@ -1,0 +1,360 @@
+{
+  "capture": {
+    "capture_id": "abcdef0123456789",
+    "first_ts": 1700000000000000,
+    "format": "pcap",
+    "frame_count": 15,
+    "last_ts": 1700000003010000,
+    "link_type": 1,
+    "path": "<memory>",
+    "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    "size_bytes": 1396
+  },
+  "rows": {
+    "dns": [
+      {
+        "answers": [],
+        "flow_id": 1,
+        "frame_no": 1,
+        "is_response": false,
+        "qtype": "A",
+        "query": "www.example.com",
+        "rcode": null,
+        "trans_id": 4369,
+        "ts": 1700000000000000,
+        "ttl": null
+      },
+      {
+        "answers": [
+          "cdn.example.com",
+          "93.184.216.34"
+        ],
+        "flow_id": 1,
+        "frame_no": 2,
+        "is_response": true,
+        "qtype": "A",
+        "query": "www.example.com",
+        "rcode": "NOERROR",
+        "trans_id": 4369,
+        "ts": 1700000000020000,
+        "ttl": 60
+      },
+      {
+        "answers": [],
+        "flow_id": 2,
+        "frame_no": 3,
+        "is_response": false,
+        "qtype": "TXT",
+        "query": "x7f3.t.exfil-dns.xyz",
+        "rcode": null,
+        "trans_id": 8738,
+        "ts": 1700000001000000,
+        "ttl": null
+      },
+      {
+        "answers": [],
+        "flow_id": 2,
+        "frame_no": 4,
+        "is_response": true,
+        "qtype": "TXT",
+        "query": "x7f3.t.exfil-dns.xyz",
+        "rcode": "NXDOMAIN",
+        "trans_id": 8738,
+        "ts": 1700000001030000,
+        "ttl": null
+      },
+      {
+        "answers": [],
+        "flow_id": 3,
+        "frame_no": 8,
+        "is_response": false,
+        "qtype": "TXT",
+        "query": "example.net",
+        "rcode": null,
+        "trans_id": 13107,
+        "ts": 1700000002003000,
+        "ttl": null
+      },
+      {
+        "answers": [
+          "helloworld"
+        ],
+        "flow_id": 3,
+        "frame_no": 10,
+        "is_response": true,
+        "qtype": "TXT",
+        "query": "example.net",
+        "rcode": "NOERROR",
+        "trans_id": 13107,
+        "ts": 1700000002005000,
+        "ttl": 30
+      },
+      {
+        "answers": [],
+        "flow_id": 4,
+        "frame_no": 14,
+        "is_response": false,
+        "qtype": "AAAA",
+        "query": "v6.example.com",
+        "rcode": null,
+        "trans_id": 17476,
+        "ts": 1700000003000000,
+        "ttl": null
+      },
+      {
+        "answers": [
+          "2001:db8::1"
+        ],
+        "flow_id": 4,
+        "frame_no": 15,
+        "is_response": true,
+        "qtype": "AAAA",
+        "query": "v6.example.com",
+        "rcode": "NOERROR",
+        "trans_id": 17476,
+        "ts": 1700000003010000,
+        "ttl": 120
+      }
+    ],
+    "files": [],
+    "flows": [
+      {
+        "app_proto": "dns",
+        "bytes_down": 67,
+        "bytes_up": 33,
+        "dst_ip": "10.0.0.53",
+        "dst_port": 53,
+        "first_frame": 1,
+        "flow_id": 1,
+        "last_frame": 2,
+        "pkts_down": 1,
+        "pkts_up": 1,
+        "proto": 17,
+        "src_ip": "10.0.0.5",
+        "src_port": 51000,
+        "ts_end": 1700000000020000,
+        "ts_start": 1700000000000000
+      },
+      {
+        "app_proto": "dns",
+        "bytes_down": 38,
+        "bytes_up": 38,
+        "dst_ip": "10.0.0.53",
+        "dst_port": 53,
+        "first_frame": 3,
+        "flow_id": 2,
+        "last_frame": 4,
+        "pkts_down": 1,
+        "pkts_up": 1,
+        "proto": 17,
+        "src_ip": "10.0.0.5",
+        "src_port": 51001,
+        "ts_end": 1700000001030000,
+        "ts_start": 1700000001000000
+      },
+      {
+        "app_proto": "dns",
+        "bytes_down": 55,
+        "bytes_up": 31,
+        "dst_ip": "10.0.0.53",
+        "dst_port": 53,
+        "first_frame": 5,
+        "flow_id": 3,
+        "last_frame": 13,
+        "pkts_down": 3,
+        "pkts_up": 6,
+        "proto": 6,
+        "src_ip": "10.0.0.5",
+        "src_port": 40000,
+        "ts_end": 1700000002008000,
+        "ts_start": 1700000002000000
+      },
+      {
+        "app_proto": "dns",
+        "bytes_down": 60,
+        "bytes_up": 32,
+        "dst_ip": "2001:db8::53",
+        "dst_port": 53,
+        "first_frame": 14,
+        "flow_id": 4,
+        "last_frame": 15,
+        "pkts_down": 1,
+        "pkts_up": 1,
+        "proto": 17,
+        "src_ip": "2001:db8::5",
+        "src_port": 51002,
+        "ts_end": 1700000003010000,
+        "ts_start": 1700000003000000
+      }
+    ],
+    "frames": [
+      {
+        "caplen": 75,
+        "direction": "up",
+        "file_offset": 40,
+        "flow_id": 1,
+        "frame_no": 1,
+        "payload_len": 33,
+        "tcp_flags": null,
+        "ts": 1700000000000000,
+        "wirelen": 75
+      },
+      {
+        "caplen": 109,
+        "direction": "down",
+        "file_offset": 131,
+        "flow_id": 1,
+        "frame_no": 2,
+        "payload_len": 67,
+        "tcp_flags": null,
+        "ts": 1700000000020000,
+        "wirelen": 109
+      },
+      {
+        "caplen": 80,
+        "direction": "up",
+        "file_offset": 256,
+        "flow_id": 2,
+        "frame_no": 3,
+        "payload_len": 38,
+        "tcp_flags": null,
+        "ts": 1700000001000000,
+        "wirelen": 80
+      },
+      {
+        "caplen": 80,
+        "direction": "down",
+        "file_offset": 352,
+        "flow_id": 2,
+        "frame_no": 4,
+        "payload_len": 38,
+        "tcp_flags": null,
+        "ts": 1700000001030000,
+        "wirelen": 80
+      },
+      {
+        "caplen": 54,
+        "direction": "up",
+        "file_offset": 448,
+        "flow_id": 3,
+        "frame_no": 5,
+        "payload_len": 0,
+        "tcp_flags": 2,
+        "ts": 1700000002000000,
+        "wirelen": 54
+      },
+      {
+        "caplen": 54,
+        "direction": "down",
+        "file_offset": 518,
+        "flow_id": 3,
+        "frame_no": 6,
+        "payload_len": 0,
+        "tcp_flags": 18,
+        "ts": 1700000002001000,
+        "wirelen": 54
+      },
+      {
+        "caplen": 54,
+        "direction": "up",
+        "file_offset": 588,
+        "flow_id": 3,
+        "frame_no": 7,
+        "payload_len": 0,
+        "tcp_flags": 16,
+        "ts": 1700000002002000,
+        "wirelen": 54
+      },
+      {
+        "caplen": 59,
+        "direction": "up",
+        "file_offset": 658,
+        "flow_id": 3,
+        "frame_no": 8,
+        "payload_len": 5,
+        "tcp_flags": 24,
+        "ts": 1700000002003000,
+        "wirelen": 59
+      },
+      {
+        "caplen": 80,
+        "direction": "up",
+        "file_offset": 733,
+        "flow_id": 3,
+        "frame_no": 9,
+        "payload_len": 26,
+        "tcp_flags": 24,
+        "ts": 1700000002004000,
+        "wirelen": 80
+      },
+      {
+        "caplen": 109,
+        "direction": "down",
+        "file_offset": 829,
+        "flow_id": 3,
+        "frame_no": 10,
+        "payload_len": 55,
+        "tcp_flags": 24,
+        "ts": 1700000002005000,
+        "wirelen": 109
+      },
+      {
+        "caplen": 54,
+        "direction": "up",
+        "file_offset": 954,
+        "flow_id": 3,
+        "frame_no": 11,
+        "payload_len": 0,
+        "tcp_flags": 17,
+        "ts": 1700000002006000,
+        "wirelen": 54
+      },
+      {
+        "caplen": 54,
+        "direction": "down",
+        "file_offset": 1024,
+        "flow_id": 3,
+        "frame_no": 12,
+        "payload_len": 0,
+        "tcp_flags": 17,
+        "ts": 1700000002007000,
+        "wirelen": 54
+      },
+      {
+        "caplen": 54,
+        "direction": "up",
+        "file_offset": 1094,
+        "flow_id": 3,
+        "frame_no": 13,
+        "payload_len": 0,
+        "tcp_flags": 16,
+        "ts": 1700000002008000,
+        "wirelen": 54
+      },
+      {
+        "caplen": 94,
+        "direction": "up",
+        "file_offset": 1164,
+        "flow_id": 4,
+        "frame_no": 14,
+        "payload_len": 32,
+        "tcp_flags": null,
+        "ts": 1700000003000000,
+        "wirelen": 94
+      },
+      {
+        "caplen": 122,
+        "direction": "down",
+        "file_offset": 1274,
+        "flow_id": 4,
+        "frame_no": 15,
+        "payload_len": 60,
+        "tcp_flags": null,
+        "ts": 1700000003010000,
+        "wirelen": 122
+      }
+    ],
+    "http": [],
+    "tls": []
+  }
+}

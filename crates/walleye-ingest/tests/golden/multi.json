@@ -1,0 +1,157 @@
+{
+  "capture": {
+    "capture_id": "abcdef0123456789",
+    "first_ts": 1700000000000000,
+    "format": "pcapng",
+    "frame_count": 6,
+    "last_ts": 1700000200000000,
+    "link_type": 1,
+    "path": "<memory>",
+    "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    "size_bytes": 572
+  },
+  "rows": {
+    "dns": [],
+    "files": [],
+    "flows": [
+      {
+        "app_proto": null,
+        "bytes_down": 0,
+        "bytes_up": 1,
+        "dst_ip": "10.2.0.2",
+        "dst_port": 8000,
+        "first_frame": 3,
+        "flow_id": 2,
+        "last_frame": 3,
+        "pkts_down": 0,
+        "pkts_up": 1,
+        "proto": 17,
+        "src_ip": "10.2.0.1",
+        "src_port": 7000,
+        "ts_end": 1700000000000500,
+        "ts_start": 1700000000000500
+      },
+      {
+        "app_proto": null,
+        "bytes_down": 2,
+        "bytes_up": 1,
+        "dst_ip": "10.1.0.2",
+        "dst_port": 6000,
+        "first_frame": 1,
+        "flow_id": 1,
+        "last_frame": 2,
+        "pkts_down": 1,
+        "pkts_up": 1,
+        "proto": 17,
+        "src_ip": "10.1.0.1",
+        "src_port": 5000,
+        "ts_end": 1700000000000000,
+        "ts_start": 1700000000000000
+      },
+      {
+        "app_proto": null,
+        "bytes_down": 0,
+        "bytes_up": 2,
+        "dst_ip": "10.2.0.2",
+        "dst_port": 8000,
+        "first_frame": 4,
+        "flow_id": 3,
+        "last_frame": 4,
+        "pkts_down": 0,
+        "pkts_up": 1,
+        "proto": 17,
+        "src_ip": "10.2.0.1",
+        "src_port": 7000,
+        "ts_end": 1700000120000000,
+        "ts_start": 1700000120000000
+      },
+      {
+        "app_proto": null,
+        "bytes_down": 0,
+        "bytes_up": 2,
+        "dst_ip": "10.3.0.2",
+        "dst_port": 9,
+        "first_frame": 6,
+        "flow_id": 4,
+        "last_frame": 6,
+        "pkts_down": 0,
+        "pkts_up": 1,
+        "proto": 17,
+        "src_ip": "10.3.0.1",
+        "src_port": 9,
+        "ts_end": 1700000200000000,
+        "ts_start": 1700000200000000
+      }
+    ],
+    "frames": [
+      {
+        "caplen": 43,
+        "direction": "up",
+        "file_offset": 108,
+        "flow_id": 1,
+        "frame_no": 1,
+        "payload_len": 1,
+        "tcp_flags": null,
+        "ts": 1700000000000000,
+        "wirelen": 43
+      },
+      {
+        "caplen": 44,
+        "direction": "down",
+        "file_offset": 168,
+        "flow_id": 1,
+        "frame_no": 2,
+        "payload_len": 2,
+        "tcp_flags": null,
+        "ts": 1700000000000000,
+        "wirelen": 44
+      },
+      {
+        "caplen": 29,
+        "direction": "up",
+        "file_offset": 244,
+        "flow_id": 2,
+        "frame_no": 3,
+        "payload_len": 1,
+        "tcp_flags": null,
+        "ts": 1700000000000500,
+        "wirelen": 29
+      },
+      {
+        "caplen": 30,
+        "direction": "up",
+        "file_offset": 324,
+        "flow_id": 3,
+        "frame_no": 4,
+        "payload_len": 2,
+        "tcp_flags": null,
+        "ts": 1700000120000000,
+        "wirelen": 30
+      },
+      {
+        "caplen": 43,
+        "direction": null,
+        "file_offset": 388,
+        "flow_id": null,
+        "frame_no": 5,
+        "payload_len": 0,
+        "tcp_flags": null,
+        "ts": 1700000000000000,
+        "wirelen": 43
+      },
+      {
+        "caplen": 44,
+        "direction": "up",
+        "file_offset": 524,
+        "flow_id": 4,
+        "frame_no": 6,
+        "payload_len": 2,
+        "tcp_flags": null,
+        "ts": 1700000200000000,
+        "wirelen": 44
+      }
+    ],
+    "http": [],
+    "tls": []
+  }
+}
