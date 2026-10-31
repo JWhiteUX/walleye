@@ -22,6 +22,8 @@ Each run writes `<stem>.labels.json` beside the capture; the same seed gives a b
 | `beacon` | same | 10.0.0.23 | TLS 1.2 to `cdn-update.top` / 185.199.110.77 every 60 s ±3 %, self-signed cert, implant ClientHello (no ALPN, no GREASE) |
 | `dns_tunnel` | same | 10.0.0.17 | bursts of 100–400 base32 queries under `t.exfil-dns.xyz` (85 % TXT, 5 % NULL, 10 % A) via resolver 10.0.0.2 |
 | `dga` | same | 10.0.0.12 | every 300 s ±10 %: 25–60 random-name A queries (NXDOMAIN); one seed-derived domain resolves to 203.0.113.45, followed by TLS |
-| `scale` | from 08:00 until the size budget | 10.0.0.23, .17, .12 | 200 hosts, adds bulk video/backup/update transfers, plus all three behaviours above |
+| `scale` | from 08:00; bulk traffic is paced so the span is ~6 min per GiB (15 min..2 h; 10 GiB ≈ 58 min) | 10.0.0.23, .17, .12 | 200 hosts, adds bulk video/backup/update transfers, plus all three behaviours above, starting in the first minute |
+
+Labels never claim behaviour that isn't in the file. A host goes into `c2_hosts` only when the capture holds at least 10 completed beacon contacts, 50 tunnel queries, or 2 DGA bursts. Otherwise the `notes` field says `NOT labelled` with the count. Every labels file ends with an `Emitted:` summary of the counts. The `every_label_is_backed_by_traffic` test re-counts them from the parsed pcap.
 
 Fidelity notes: real TCP handshakes, MSS segmentation, delayed ACKs, and FIN/RST teardown with consistent seq/ack; correct IPv4/IPv6/TCP/UDP lengths and checksums; DNS with name compression, CNAME chains, SOA on NODATA/NXDOMAIN; HTTP/1.1 with Content-Length and Content-Disposition; TLS 1.3 (ServerHello + encrypted remainder) and TLS 1.2 (plaintext Certificate chain). Chrome and Firefox ClientHellos carry an X25519MLKEM768 key share, so they span two TCP segments, as they do in real traffic. Certificates and OCSP/CRL bodies are structurally valid DER; their keys and signatures are random bytes.

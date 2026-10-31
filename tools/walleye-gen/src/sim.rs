@@ -54,6 +54,11 @@ impl<W: Write> Sim<W> {
         self.push(t, slot);
     }
 
+    /// Timestamp of the last packet written (`i64::MIN` before any).
+    pub fn last_ts(&self) -> i64 {
+        self.last_ts
+    }
+
     pub fn active_flows(&self) -> usize {
         self.heap.len()
     }
