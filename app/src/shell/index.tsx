@@ -1,33 +1,24 @@
-// Placeholder layout. Owner: Agent D. Replace with the real shell (keep the
-// AppShell export). The shell composes every panel by its public export:
+// Shell entry (Agent D). Composes every panel by its public export:
 //   TimelinePanel, QueuePanel (Agent E) · CasePanel (Agent F)
 //   SessionTable, PacketPane (Agent D)
-import { CasePanel } from "../case";
-import { PacketPane } from "../packets";
-import { QueuePanel } from "../queue";
-import { SessionTable } from "../table";
-import { TimelinePanel } from "../timeline";
+// `?bench=table` renders the 1M-row table benchmark instead. Only in dev
+// builds, or a production build made with VITE_WALLEYE_BENCH=1 (to measure
+// React's production mode); release builds drop the benchmark entirely.
+import { lazy, Suspense } from "react";
+import { AppShell as Shell } from "./AppShell";
+
+const TableBench =
+  import.meta.env.DEV || import.meta.env.VITE_WALLEYE_BENCH === "1"
+    ? lazy(() => import("../table/TableBench").then((m) => ({ default: m.TableBench })))
+    : null;
 
 export function AppShell() {
-  return (
-    <div
-      style={{
-        display: "grid",
-        height: "100%",
-        gridTemplateColumns: "1fr 360px",
-        gridTemplateRows: "auto 220px 1fr 1fr",
-      }}
-    >
-      <header style={{ gridColumn: "1 / -1", padding: 8, borderBottom: "1px solid var(--wl-border)" }}>
-        <h1 style={{ fontSize: 15, margin: 0 }}>Walleye</h1>
-      </header>
-      <main style={{ display: "contents" }}>
-        <TimelinePanel />
-        <QueuePanel />
-        <SessionTable />
-        <CasePanel />
-        <PacketPane />
-      </main>
-    </div>
-  );
+  if (TableBench && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("bench") === "table") {
+    return (
+      <Suspense fallback={<p>Loading benchmark…</p>}>
+        <TableBench />
+      </Suspense>
+    );
+  }
+  return <Shell />;
 }
