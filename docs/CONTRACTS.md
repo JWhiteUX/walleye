@@ -52,7 +52,7 @@ One Parquet dataset per table, row groups sorted by time, exposed as a DuckDB vi
 **Reason** (`reasons[]` element): `{rule_id, signal, value, unit?, weight, explanation, attack_technique?, evidence}`.
 **Evidence**: `{flow_ids[], frame_nos[], truncated, total}`. Never empty on a reason or IOC. Lists are capped at `EVIDENCE_CAP` (200): keep the earliest, set `truncated`, report the real `total`.
 
-**Stable ids:** `finding_id = hex16(sha256("finding\0" + detector + "\0" + entity_type + "\0" + entity))`, `ioc_id = hex16(sha256("ioc\0" + type + "\0" + value))`, where `type` is the snake_case `IocType`.
+**Stable ids:** `finding_id = hex16(sha256("finding\0" + entity_type + "\0" + entity))` (no detector: a host's top reason can change between runs, and the id must not, or verdicts are orphaned), `ioc_id = hex16(sha256("ioc\0" + type + "\0" + value))`, where `type` is the snake_case `IocType`.
 
 **Scores:** each reason contributes `weight × strength` (strength 0..1) points. A finding's score is `min(100, Σ points)` over its reasons. Reasons are sorted by `weight` descending; the top one sets `detector` and `attack_technique`. Entity for the MVP is always the internal host (`entity_type = "host"`, `entity = src_ip`).
 
@@ -208,7 +208,7 @@ min_score: 30                  # drop reasons below this many points
 explanation: "{src} contacted {dst} {count} times, every {interval_s}s ±{jitter_pct}%"
 ```
 
-`explanation` placeholders `{name}` are filled by the detector with `render_template`; no logic, no markup.
+`title` and `explanation` are both templates: `{name}` placeholders are filled by the detector with `render_template`; no logic, no markup. Captured strings are sanitized to printable text and clipped before substitution.
 
 **Allowlist** (`rules/allowlist.yaml`, `Allowlist`):
 
@@ -337,7 +337,7 @@ Labels JSON (also the format for external samples, stored in `fixtures/labels/<n
 
 Bench: `tools/bench/queries.txt` has one benchmark per line, `view<TAB>filter` (`#` comments). `cargo run -p walleye-bench --release -- --index <dir> --queries tools/bench/queries.txt` prints p50/p95/max per query and overall.
 
-Eval: `cargo run -p walleye-eval --release -- --findings <findings.json> --labels <labels.json> [--k 5]` prints a Markdown table: sample, C2 rank, hit@k, top-10 false-positive rate. Before integration it reads a findings JSON (`Vec<Finding>`); the lead adds an end-to-end mode in Phase 2.
+Eval: `cargo run -p walleye-eval --release -- --findings <findings.json> --labels <labels.json> [--k 5]` prints a Markdown table: sample, C2 rank, hit@k, top-10 false-positive rate. **Top-10 FP rate** = (findings ranked 1–10 whose `entity` is not in `c2_hosts`) / 10, with a fixed denominator and no score floor; on a `benign` sample every finding in the top 10 is a false positive. Gate: ≤ 30 % on the benign sample. **C2 rank** = best rank among findings whose entity is in `c2_hosts`; hit@k when it is ≤ k. Before integration it reads a findings JSON (`Vec<Finding>`); the lead adds an end-to-end mode in Phase 2.
 
 ## 10. Mock backend
 
