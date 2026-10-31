@@ -1,0 +1,28 @@
+# Repeated POSTs to one URI with a C2/exfil tell: a bare-IP Host (no DNS
+# name) and/or bulk upload (e.g. StealC posting stolen data to
+# http://<ip>/<hex>.php). Repetition and rate are supporting signals that only
+# count alongside a tell: busy web apps POST often to their own named APIs.
+id: http.post_exfil
+title: "Repeated HTTP POSTs to {host}{uri}"
+detector: http_post_exfil
+attack_technique: T1041
+params:
+  min_posts: 5
+  posts_full: 20
+  bytes_low: 100000       # uploaded request bytes for 0 upload points
+  bytes_high: 5000000     # ... for full points
+  rate_low: 2             # POSTs per minute for 0 rate points
+  rate_high: 20
+  min_span_s: 60          # floor for the time span when computing the rate
+  named_host_factor: 0.5  # Host is a DNS name
+  allowlist_factor: 0.25
+  prevalence_min_hosts: 3
+  prevalence_ratio: 0.3
+  prevalence_factor: 0.3
+weights:
+  upload_volume: 30
+  ip_host: 15
+  repeat: 20
+  rate: 15
+min_score: 35
+explanation: "{src} sent {posts} POSTs to {host}{uri} ({dst}) in {span_s}s ({rate_per_min}/min), uploading {mb} MiB [{breakdown}]"

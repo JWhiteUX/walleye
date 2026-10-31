@@ -27,6 +27,9 @@ pub const DETECTORS: &[&str] = &[
     "dns_subdomain_rate",
     "dns_nxdomain_burst",
     "dns_tunnel",
+    "http_beaconing",
+    "http_tls_port",
+    "http_post_exfil",
 ];
 
 /// Default value (and type) of one detector parameter.
@@ -49,9 +52,31 @@ const IGNORE_SUFFIXES: &[&str] = &[
     "corp",
 ];
 
+const BIG: f64 = 1e12;
+
+/// Ports where a cleartext HTTP request line is out of place.
+const TLS_PORTS: &[f64] = &[
+    443.0, 8443.0, 465.0, 563.0, 636.0, 853.0, 989.0, 990.0, 993.0, 995.0, 5061.0, 6697.0,
+];
+
 /// `(name, default)` per param, per detector. Units: seconds unless `_ms`.
-fn param_specs(detector: &str) -> &'static [(&'static str, Def)] {
-    const BIG: f64 = 1e12;
+fn param_specs(detector: &str) -> Vec<(&'static str, Def)> {
+    match detector {
+        // Same series analysis as `beaconing`, over HTTP requests inside
+        // connections instead of connection starts.
+        "http_beaconing" => {
+            let mut v = base_specs("beaconing").to_vec();
+            v.extend_from_slice(&[
+                ("min_requests_per_flow", Def::Num(2.0, 1.0, BIG)),
+                ("named_host_factor", Def::Num(0.35, 0.0, 1.0)),
+            ]);
+            v
+        }
+        d => base_specs(d).to_vec(),
+    }
+}
+
+fn base_specs(detector: &str) -> &'static [(&'static str, Def)] {
     match detector {
         "beaconing" => &[
             ("min_count", Def::Num(8.0, 3.0, BIG)),
@@ -152,6 +177,29 @@ fn param_specs(detector: &str) -> &'static [(&'static str, Def)] {
             ("prevalence_factor", Def::Num(0.3, 0.0, 1.0)),
             ("ignore_suffixes", Def::Strs(IGNORE_SUFFIXES)),
         ],
+        "http_tls_port" => &[
+            ("tls_ports", Def::Nums(TLS_PORTS)),
+            ("min_requests", Def::Num(3.0, 1.0, BIG)),
+            ("requests_full", Def::Num(20.0, 1.0, BIG)),
+            ("allowlist_factor", Def::Num(0.25, 0.0, 1.0)),
+            ("prevalence_min_hosts", Def::Num(3.0, 2.0, BIG)),
+            ("prevalence_ratio", Def::Num(0.3, 0.0, 1.0)),
+            ("prevalence_factor", Def::Num(0.3, 0.0, 1.0)),
+        ],
+        "http_post_exfil" => &[
+            ("min_posts", Def::Num(5.0, 2.0, BIG)),
+            ("posts_full", Def::Num(20.0, 2.0, BIG)),
+            ("bytes_low", Def::Num(100_000.0, 0.0, BIG)),
+            ("bytes_high", Def::Num(5_000_000.0, 0.0, BIG)),
+            ("rate_low", Def::Num(2.0, 0.0, BIG)),
+            ("rate_high", Def::Num(20.0, 0.0, BIG)),
+            ("min_span_s", Def::Num(60.0, 1.0, BIG)),
+            ("named_host_factor", Def::Num(0.5, 0.0, 1.0)),
+            ("allowlist_factor", Def::Num(0.25, 0.0, 1.0)),
+            ("prevalence_min_hosts", Def::Num(3.0, 2.0, BIG)),
+            ("prevalence_ratio", Def::Num(0.3, 0.0, 1.0)),
+            ("prevalence_factor", Def::Num(0.3, 0.0, 1.0)),
+        ],
         _ => &[],
     }
 }
@@ -165,6 +213,9 @@ fn signal_names(detector: &str) -> &'static [&'static str] {
         "dns_subdomain_rate" => &["unique_rate", "unique_ratio"],
         "dns_nxdomain_burst" => &["burst", "repeat", "dga_entropy"],
         "dns_tunnel" => &["record_volume", "byte_volume"],
+        "http_beaconing" => &["regularity", "count", "duration", "payload_uniformity"],
+        "http_tls_port" => &["cleartext", "ip_host"],
+        "http_post_exfil" => &["upload_volume", "ip_host", "repeat", "rate"],
         _ => &[],
     }
 }
@@ -385,7 +436,7 @@ fn compile(def: RuleDef) -> ApiResult<Rule> {
     let mut nums = BTreeMap::new();
     let mut num_lists = BTreeMap::new();
     let mut str_lists = BTreeMap::new();
-    for &(name, spec) in specs {
+    for &(name, spec) in &specs {
         let given = def.params.get(name);
         match spec {
             Def::Num(default, lo, hi) => {

@@ -19,6 +19,7 @@
 mod beacon;
 mod combine;
 mod dns;
+mod http;
 mod rules;
 mod util;
 
@@ -40,7 +41,8 @@ pub fn run(src: &dyn DetectSource, rules: &RuleSet, allow: &Allowlist) -> ApiRes
     let mut bcol = beacon::Collector::default();
     let want_beacon = rules.enabled("beaconing").next().is_some();
     let want_dns = dns::DnsCollector::wanted(rules);
-    let mut flow_host: HashMap<u64, u32> = HashMap::new();
+    let want_http = http::HttpCollector::wanted(rules);
+    let mut flow_meta: http::FlowMap = HashMap::new();
     let mut internal: HashSet<u32> = HashSet::new();
 
     // Pass 1: flows.
@@ -50,11 +52,19 @@ pub fn run(src: &dyn DetectSource, rules: &RuleSet, allow: &Allowlist) -> ApiRes
         if hosts.class(s) == AddrClass::Internal {
             internal.insert(s);
         }
-        if want_beacon {
+        if want_beacon || want_http {
+            // HTTP rules use the destination prevalence collected here.
             bcol.observe(&hosts, s, d, f);
         }
-        if want_dns {
-            flow_host.insert(f.flow_id, s);
+        if want_dns || want_http {
+            flow_meta.insert(
+                f.flow_id,
+                http::FlowMeta {
+                    src: s,
+                    dst: d,
+                    dst_port: f.dst_port,
+                },
+            );
         }
     })?;
 
@@ -90,8 +100,8 @@ pub fn run(src: &dyn DetectSource, rules: &RuleSet, allow: &Allowlist) -> ApiRes
                 }
             }
             if want_dns {
-                if let Some(&h) = flow_host.get(&r.flow_id) {
-                    dcol.observe(h, r, !r.is_response);
+                if let Some(m) = flow_meta.get(&r.flow_id) {
+                    dcol.observe(m.src, r, !r.is_response);
                 }
             }
         })?;
@@ -102,21 +112,30 @@ pub fn run(src: &dyn DetectSource, rules: &RuleSet, allow: &Allowlist) -> ApiRes
         dcol = dns::DnsCollector::new(rules);
         src.for_each_dns(&mut |r| {
             if r.is_response {
-                if let Some(&h) = flow_host.get(&r.flow_id) {
-                    dcol.observe(h, r, true);
+                if let Some(m) = flow_meta.get(&r.flow_id) {
+                    dcol.observe(m.src, r, true);
                 }
             }
         })?;
     }
 
-    // Pass 3 (only if needed): TLS SNI / HTTP Host for candidate destinations.
+    // Pass 3: TLS SNI for candidate destinations (only if needed), then
+    // http (names for candidates, and the HTTP detectors).
     if !names.is_empty() {
         src.for_each_tls(&mut |t| {
             if let (Some(dst), Some(sni)) = (names.dst_of_flow(t.flow_id), t.sni.as_deref()) {
                 names.add(dst, sni);
             }
         })?;
+    }
+    let mut hcol = http::HttpCollector::new(rules);
+    if !names.is_empty() || want_http {
         src.for_each_http(&mut |h| {
+            if want_http {
+                if let Some(m) = flow_meta.get(&h.flow_id) {
+                    hcol.observe(&hosts, *m, h);
+                }
+            }
             if let (Some(dst), Some(host)) = (names.dst_of_flow(h.flow_id), h.host.as_deref()) {
                 let host = host.rsplit_once(':').map_or(host, |(h, p)| {
                     if p.bytes().all(|b| b.is_ascii_digit()) {
@@ -140,11 +159,23 @@ pub fn run(src: &dyn DetectSource, rules: &RuleSet, allow: &Allowlist) -> ApiRes
         allow,
         internal_hosts: internal.len(),
     };
+    let no_extra = beacon::Extra::default();
+    let mut beaconed: HashSet<(u32, u32)> = HashSet::new();
     for c in &cands {
         if let Some(rule) = rules.rules().get(c.rule_idx) {
-            hits.extend(beacon::finalize(c, rule, &cx));
+            if let Some(h) = beacon::finalize(c, rule, &cx, &no_extra) {
+                beaconed.insert((c.src, c.dst));
+                hits.push(h);
+            }
         }
     }
+    let hcx = http::HttpCtx {
+        col: &hcol,
+        hosts: &hosts,
+        allow,
+        flows: &bcol,
+        internal_hosts: internal.len(),
+    };
     for (idx, rule) in rules.rules().iter().enumerate() {
         if !rule.def.enabled {
             continue;
@@ -153,6 +184,11 @@ pub fn run(src: &dyn DetectSource, rules: &RuleSet, allow: &Allowlist) -> ApiRes
             "dns_nxdomain_burst" => {
                 dns::analyze_nx(&dcol, &hosts, allow, rule, idx, &entity_ok, &mut hits)
             }
+            "http_beaconing" => {
+                http::analyze_beaconing(&hcx, &cx, rule, idx, &entity_ok, &beaconed, &mut hits)
+            }
+            "http_tls_port" => http::analyze_tls_port(&hcx, rule, idx, &entity_ok, &mut hits),
+            "http_post_exfil" => http::analyze_post_exfil(&hcx, rule, idx, &entity_ok, &mut hits),
             d if d.starts_with("dns_") => dns::analyze_parents(
                 &dcol,
                 &hosts,

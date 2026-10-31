@@ -99,12 +99,31 @@ enum Item {
         rcode: &'static str,
         answers: Vec<String>,
     },
+    /// One TCP connection carrying several HTTP requests (keep-alive).
+    Session {
+        ts: i64,
+        src: String,
+        dst: String,
+        dport: u16,
+        reqs: Vec<Req>,
+    },
+}
+
+/// One HTTP request inside a `Session`, `dt` µs after the connection opened.
+#[derive(Debug, Clone)]
+pub struct Req {
+    pub dt: i64,
+    pub method: &'static str,
+    pub host: String,
+    pub uri: String,
+    pub up: u64,
+    pub down: u64,
 }
 
 impl Item {
     fn ts(&self) -> i64 {
         match self {
-            Item::Flow { ts, .. } | Item::Dns { ts, .. } => *ts,
+            Item::Flow { ts, .. } | Item::Dns { ts, .. } | Item::Session { ts, .. } => *ts,
         }
     }
 }
@@ -210,6 +229,18 @@ impl Synth {
         });
     }
 
+    /// A keep-alive connection carrying `reqs` (sorted by `dt`).
+    pub fn session(&mut self, ts: i64, src: &str, dst: &str, dport: u16, mut reqs: Vec<Req>) {
+        reqs.sort_by_key(|r| r.dt);
+        self.items.push(Item::Session {
+            ts,
+            src: src.into(),
+            dst: dst.into(),
+            dport,
+            reqs,
+        });
+    }
+
     /// A lookup that honours a 300 s client cache (returns true if sent).
     pub fn resolve(&mut self, ts: i64, client: &str, name: &str, ip: &str) -> bool {
         let key = (client.to_string(), name.to_string());
@@ -308,6 +339,52 @@ impl Synth {
                         bytes_down: down,
                         pkts_up: pkts / 2,
                         pkts_down: pkts - pkts / 2,
+                        first_frame: first,
+                        last_frame: frame,
+                    });
+                }
+                Item::Session {
+                    ts,
+                    src: s,
+                    dst,
+                    dport,
+                    reqs,
+                } => {
+                    let first = frame + 1;
+                    frame += 3 + 2 * reqs.len() as u64 + 1;
+                    for (k, r) in reqs.iter().enumerate() {
+                        let fno = first + 3 + 2 * k as u64;
+                        src.http.push(HttpRow {
+                            ts: ts + r.dt,
+                            flow_id,
+                            frame_no: fno,
+                            method: Some(r.method.into()),
+                            host: Some(r.host.clone()),
+                            uri: Some(r.uri.clone()),
+                            user_agent: None,
+                            status: Some(200),
+                            resp_frame_no: Some(fno + 1),
+                            req_bytes: r.up,
+                            resp_bytes: r.down,
+                        });
+                    }
+                    let up: u64 = reqs.iter().map(|r| r.up).sum();
+                    let down: u64 = reqs.iter().map(|r| r.down).sum();
+                    let last_dt = reqs.last().map_or(0, |r| r.dt);
+                    src.flows.push(FlowRow {
+                        flow_id,
+                        ts_start: ts,
+                        ts_end: ts + last_dt + 50_000,
+                        src_ip: s,
+                        src_port: sport,
+                        dst_ip: dst,
+                        dst_port: dport,
+                        proto: 6,
+                        app_proto: Some("http".into()),
+                        bytes_up: up,
+                        bytes_down: down,
+                        pkts_up: 2 + reqs.len() as u64,
+                        pkts_down: 2 + reqs.len() as u64,
                         first_frame: first,
                         last_frame: frame,
                     });
@@ -901,6 +978,9 @@ pub fn assert_evidence_valid(src: &MemorySource, findings: &[Finding]) {
     for d in &src.dns {
         frames.insert(d.frame_no);
     }
+    for h in &src.http {
+        frames.insert(h.frame_no);
+    }
     for f in &src.flows {
         frames.insert(f.first_frame);
     }
@@ -968,4 +1048,147 @@ pub fn has_placeholder(s: &str) -> bool {
         rest = after;
     }
     false
+}
+
+/// Requests every `period_s` (± `jitter` fraction) for `dur_s` seconds.
+#[allow(clippy::too_many_arguments)]
+pub fn periodic_reqs(
+    rng: &mut Rng,
+    period_s: f64,
+    jitter: f64,
+    dur_s: f64,
+    method: &'static str,
+    host: &str,
+    uri: &str,
+    up: (u64, u64),
+) -> Vec<Req> {
+    let mut v = Vec::new();
+    let mut t = 0.0;
+    while t < dur_s {
+        v.push(Req {
+            dt: (t * S as f64) as i64,
+            method,
+            host: host.into(),
+            uri: uri.into(),
+            up: rng.int(up.0, up.1),
+            down: rng.int(0, 200),
+        });
+        t += period_s * rng.range(1.0 - jitter, 1.0 + jitter);
+    }
+    v
+}
+
+/// NetSupport-like RAT: one connection to a bare IP on 443, cleartext POSTs
+/// every 60 s ±1 %.
+pub fn netsupport_like(sy: &mut Synth, host: &str, hours: f64) {
+    let ip = "194.180.191.64";
+    let mut reqs = vec![];
+    for k in 0..4 {
+        reqs.push(Req {
+            dt: k * 200_000,
+            method: "POST",
+            host: ip.into(),
+            uri: format!("http://{ip}/fakeurl.htm"),
+            up: 250,
+            down: 150,
+        });
+    }
+    let mut rest = periodic_reqs(
+        &mut sy.rng,
+        60.0,
+        0.01,
+        hours * 3600.0,
+        "POST",
+        ip,
+        &format!("http://{ip}/fakeurl.htm"),
+        (36, 36),
+    );
+    for r in &mut rest {
+        r.dt += 60 * S;
+    }
+    reqs.extend(rest);
+    sy.session(T0 + 600 * S, host, ip, 443, reqs);
+}
+
+/// StealC-like stealer: one connection to a bare IP on 80, ~27 irregular
+/// POSTs 1-2 s apart to one URI, ~5 MB uploaded.
+pub fn stealc_like(sy: &mut Synth, host: &str) {
+    let ip = "37.221.66.166";
+    let mut reqs = vec![];
+    let mut t = 0.0;
+    for k in 0..27 {
+        let up = if k % 5 == 4 {
+            sy.rng.int(400_000, 1_200_000)
+        } else {
+            sy.rng.int(140, 3000)
+        };
+        reqs.push(Req {
+            dt: (t * S as f64) as i64,
+            method: "POST",
+            host: ip.into(),
+            uri: "/4a815a53876a4172.php".into(),
+            up,
+            down: 1400,
+        });
+        t += sy.rng.range(1.0, 2.0);
+    }
+    sy.session(T0 + 1200 * S, host, ip, 80, reqs);
+}
+
+/// Benign: a dashboard polling a named API over one keep-alive connection on
+/// port 80 every 30 s ±2 % all day (single host).
+pub fn keepalive_poller(sy: &mut Synth, host: &str, hours: f64) {
+    let ip = "151.101.10.20";
+    sy.dns(
+        T0 + 99 * S,
+        host,
+        "status.saas-dashboard.com",
+        "A",
+        "NOERROR",
+        vec![ip.into()],
+    );
+    let reqs = periodic_reqs(
+        &mut sy.rng,
+        30.0,
+        0.02,
+        hours * 3600.0,
+        "GET",
+        "status.saas-dashboard.com",
+        "/api/v2/poll",
+        (300, 400),
+    );
+    sy.session(T0 + 100 * S, host, ip, 80, reqs);
+}
+
+/// Benign: a web app POSTing analytics to its named API every 2-5 s over
+/// keep-alive (small bodies), plus a named bulk upload of 30 × 1 MB chunks.
+pub fn chatty_web_app(sy: &mut Synth, host: &str) {
+    let ip = "104.18.20.30";
+    let mut reqs = vec![];
+    let mut t = 0.0;
+    while t < 3600.0 {
+        reqs.push(Req {
+            dt: (t * S as f64) as i64,
+            method: "POST",
+            host: "api.webapp.example.com".into(),
+            uri: "/v1/collect".into(),
+            up: sy.rng.int(300, 900),
+            down: 50,
+        });
+        t += sy.rng.range(2.0, 5.0);
+    }
+    sy.session(T0 + 300 * S, host, ip, 80, reqs);
+    let ip2 = "104.18.20.31";
+    let mut ups = vec![];
+    for k in 0..30 {
+        ups.push(Req {
+            dt: k * 1_500_000,
+            method: "POST",
+            host: "upload.files.example.net".into(),
+            uri: "/upload/chunk".into(),
+            up: 1_000_000,
+            down: 200,
+        });
+    }
+    sy.session(T0 + 5000 * S, host, ip2, 80, ups);
 }

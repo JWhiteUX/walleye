@@ -18,7 +18,7 @@
 //! destination contacted by a large share of internal hosts (fleet-wide
 //! software, not one compromised host).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use walleye_core::rules::render_template;
 use walleye_core::{Allowlist, Evidence, FlowId, FlowRow, FrameNo, Reason, Ts};
@@ -34,27 +34,35 @@ const MAX_SRCS_PER_DST: usize = 256;
 /// Names remembered per candidate destination.
 const MAX_NAMES_PER_DST: usize = 4;
 
+/// Distinct flows remembered per pair when a series is built from requests.
+const MAX_FLOWS_PER_PAIR: usize = 4096;
+
+/// One point of a series: a flow start, or an HTTP request inside a flow.
+/// `first_frame` is the evidence frame (flow's first frame, or the request's).
 #[derive(Debug, Clone, Copy)]
-struct Ev {
-    ts: Ts,
-    flow_id: FlowId,
-    first_frame: FrameNo,
-    bytes: u64,
-    dst_port: u16,
+pub(crate) struct Ev {
+    pub(crate) ts: Ts,
+    pub(crate) flow_id: FlowId,
+    pub(crate) first_frame: FrameNo,
+    pub(crate) bytes: u64,
+    pub(crate) dst_port: u16,
 }
 
 #[derive(Debug, Default)]
 struct Pair {
     events: Vec<Ev>,
     dropped: u64,
+    flow_set: HashSet<FlowId>,
 }
 
-/// Streaming state built during the flows pass.
+/// Streaming series per (src, dst): flow starts (flows pass) or HTTP
+/// requests (http pass, `tracking_flows`).
 #[derive(Debug, Default)]
 pub(crate) struct Collector {
     pairs: HashMap<(u32, u32), Pair>,
     /// dst → distinct internal srcs (capped).
     dst_srcs: HashMap<u32, Vec<u32>>,
+    track_flows: bool,
 }
 
 impl Collector {
@@ -82,7 +90,30 @@ impl Collector {
         }
     }
 
-    fn prevalence(&self, dst: u32) -> usize {
+    /// A collector for request series that also counts distinct flows per
+    /// pair (requests per connection).
+    pub(crate) fn tracking_flows() -> Self {
+        Self {
+            track_flows: true,
+            ..Default::default()
+        }
+    }
+
+    /// Add one request-level event (caller has already checked classes).
+    pub(crate) fn push(&mut self, src: u32, dst: u32, ev: Ev) {
+        let track = self.track_flows;
+        let pair = self.pairs.entry((src, dst)).or_default();
+        if track && pair.flow_set.len() < MAX_FLOWS_PER_PAIR {
+            pair.flow_set.insert(ev.flow_id);
+        }
+        if pair.events.len() < MAX_EVENTS_PER_PAIR {
+            pair.events.push(ev);
+        } else {
+            pair.dropped += 1;
+        }
+    }
+
+    pub(crate) fn prevalence(&self, dst: u32) -> usize {
         self.dst_srcs.get(&dst).map_or(0, Vec::len)
     }
 }
@@ -95,6 +126,8 @@ pub(crate) struct Candidate {
     pub(crate) dst: u32,
     contacts: usize,
     flows: u64,
+    /// Distinct flows behind the events (request series only; else 0).
+    pub(crate) distinct_flows: u64,
     interval_s: f64,
     jitter: f64,
     duration_s: f64,
@@ -140,7 +173,8 @@ pub(crate) fn analyze(
             continue;
         }
         evs.sort_by_key(|e| (e.ts, e.flow_id));
-        if let Some(c) = measure(&evs, pair.dropped, rule, rule_idx, src, dst) {
+        if let Some(mut c) = measure(&evs, pair.dropped, rule, rule_idx, src, dst) {
+            c.distinct_flows = pair.flow_set.len() as u64;
             out.push(c);
         }
     }
@@ -247,6 +281,7 @@ fn measure(
         dst,
         contacts: n,
         flows: evs.len() as u64 + dropped,
+        distinct_flows: 0,
         interval_s: med,
         jitter,
         duration_s,
@@ -318,9 +353,30 @@ pub(crate) struct FinalizeCtx<'a> {
     pub(crate) internal_hosts: usize,
 }
 
-pub(crate) fn finalize(c: &Candidate, rule: &Rule, cx: &FinalizeCtx<'_>) -> Option<Hit> {
+/// Per-caller additions to `finalize`: extra names for the destination
+/// (e.g. HTTP Host values), extra damping `(factor, note)`, extra template
+/// values, and the reason's signal name.
+#[derive(Debug, Default)]
+pub(crate) struct Extra {
+    pub(crate) names: Vec<String>,
+    pub(crate) factors: Vec<(f64, String)>,
+    pub(crate) values: Vec<(&'static str, String)>,
+    pub(crate) signal: Option<&'static str>,
+}
+
+pub(crate) fn finalize(
+    c: &Candidate,
+    rule: &Rule,
+    cx: &FinalizeCtx<'_>,
+    extra: &Extra,
+) -> Option<Hit> {
     let dst_ip = cx.hosts.name(c.dst);
-    let names = cx.names.get(c.dst);
+    let mut names: Vec<String> = cx.names.get(c.dst).to_vec();
+    for n in &extra.names {
+        if !names.contains(n) {
+            names.push(n.clone());
+        }
+    }
     let mut factor = 1.0;
     let mut notes: Vec<String> = Vec::new();
 
@@ -364,6 +420,11 @@ pub(crate) fn finalize(c: &Candidate, rule: &Rule, cx: &FinalizeCtx<'_>) -> Opti
         ));
     }
 
+    for (f, note) in &extra.factors {
+        factor *= f;
+        notes.push(note.clone());
+    }
+
     let raw = c.raw_points();
     let points = raw * factor;
     if points < rule.def.min_score || points <= 0.0 {
@@ -401,6 +462,11 @@ pub(crate) fn finalize(c: &Candidate, rule: &Rule, cx: &FinalizeCtx<'_>) -> Opti
     v.insert("payload_cv_pct".into(), fmt_num(c.payload_cv * 100.0, 0));
     v.insert("points".into(), fmt_num(points, 1));
     v.insert("breakdown".into(), breakdown);
+    v.insert("requests".into(), c.flows.to_string());
+    v.insert("conns".into(), c.distinct_flows.to_string());
+    for (k, val) in &extra.values {
+        v.insert((*k).into(), val.clone());
+    }
     let mut explanation = render_template(&rule.def.explanation, &v);
     if !notes.is_empty() {
         explanation.push_str(&format!(" ({})", notes.join("; ")));
@@ -416,7 +482,7 @@ pub(crate) fn finalize(c: &Candidate, rule: &Rule, cx: &FinalizeCtx<'_>) -> Opti
         ts_last: c.ts_last,
         reason: Reason {
             rule_id: rule.def.id.clone(),
-            signal: "interval_regularity".into(),
+            signal: extra.signal.unwrap_or("interval_regularity").into(),
             value: (c.jitter * 10_000.0).round() / 10_000.0,
             unit: Some("ratio".into()),
             weight: round1(points),

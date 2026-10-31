@@ -1,0 +1,20 @@
+# Cleartext HTTP request lines on a port reserved for TLS (443, 8443, 993, ...):
+# malware uses 443 to blend in but speaks plain HTTP. CONNECT (proxy set-up)
+# is ignored. A bare-IP Host adds points.
+id: http.tls_port
+title: "Cleartext HTTP on TLS port {dst_port} to {dst}"
+detector: http_tls_port
+attack_technique: T1071.001
+params:
+  tls_ports: [443, 8443, 465, 563, 636, 853, 989, 990, 993, 995, 5061, 6697]
+  min_requests: 3
+  requests_full: 20
+  allowlist_factor: 0.25
+  prevalence_min_hosts: 3
+  prevalence_ratio: 0.3
+  prevalence_factor: 0.3
+weights:
+  cleartext: 30
+  ip_host: 10
+min_score: 15
+explanation: "{src} sent {requests} cleartext HTTP requests to {dst} on TLS port {dst_port} (Host: {host}) [{breakdown}]"
