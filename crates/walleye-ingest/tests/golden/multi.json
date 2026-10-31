@@ -138,7 +138,7 @@
         "file_offset": 388,
         "flow_id": null,
         "frame_no": 5,
-        "link_type": 4294967295,
+        "link_type": null,
         "payload_len": 0,
         "tcp_flags": null,
         "ts": 1700000000000000,
