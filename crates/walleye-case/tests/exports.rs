@@ -538,3 +538,18 @@ fn pdf_escapes_hostile_text() {
         "escaped"
     );
 }
+
+/// Gate check: a claim with more frames than are listed must still identify
+/// all of them, so the label names the flows that hold them.
+#[test]
+fn truncated_evidence_link_names_the_flows() {
+    let ev = walleye_core::Evidence {
+        flow_ids: vec![97],
+        frame_nos: (100..185).collect(),
+        truncated: false,
+        total: 85,
+    };
+    let l = walleye_case::report::evidence_link("ab", &ev).expect("link");
+    assert!(l.label.ends_with("… (85 total in flow 97)"), "{}", l.label);
+    assert!(l.url.starts_with("walleye://sha256/ab/frames/100,101"));
+}

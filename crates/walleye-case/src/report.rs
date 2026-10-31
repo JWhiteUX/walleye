@@ -155,7 +155,28 @@ pub fn evidence_link(sha256: &str, ev: &Evidence) -> Option<EvidenceLink> {
         shown.join(", ")
     );
     if total > shown.len() {
-        label.push_str(&format!(" … ({total} total)"));
+        label.push_str(&format!(" … ({total} total"));
+        // Name the flows too: together with the capture hash they identify
+        // every frame behind the claim, not only the ones listed.
+        if noun == "frame" && !ev.flow_ids.is_empty() {
+            let flows: Vec<String> = ev
+                .flow_ids
+                .iter()
+                .take(MAX_LISTED)
+                .map(u64::to_string)
+                .collect();
+            let more = if ev.flow_ids.len() > flows.len() {
+                " …"
+            } else {
+                ""
+            };
+            label.push_str(&format!(
+                " in flow{} {}{more}",
+                if ev.flow_ids.len() == 1 { "" } else { "s" },
+                flows.join(", ")
+            ));
+        }
+        label.push(')');
     }
     Some(EvidenceLink {
         label,
@@ -665,7 +686,7 @@ pub fn build(input: &ReportInput, generated_at: Option<i64>) -> ApiResult<Doc> {
     ]));
     b.push(Block::Bullet(vec![
         lit(format!(
-            "At most {MAX_LISTED} frame numbers are listed per claim; the total is given when there are more."
+            "At most {MAX_LISTED} frame numbers are listed per claim; when there are more, the total and the flows holding them are given. Full frame lists per indicator are in the IOC CSV/JSON exports."
         )),
     ]));
     b.push(Block::Bullet(vec![
