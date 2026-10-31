@@ -36,3 +36,11 @@ Why things are the way they are. Newest last. Stack decisions in the first block
 **D16. YAML via `serde_yaml_ng`.** `serde_yaml` is archived; `serde_yaml_ng` is the maintained fork with the same API.
 
 **D17. Rust found at `~/.cargo/bin` but not on the default shell PATH.** `scripts/check.sh` prepends it when `cargo` is missing. Developers should add `. "$HOME/.cargo/env"` to their shell profile (see DEV_SETUP.md).
+
+## Phase 1
+
+**D18. Ingest reads captures through a reusable buffer, not mmap** (Agent A, reviewed with Agent H). If a mapped file shrinks or changes while it's open, for example tcpdump still writing to it or a file on a network share, the process dies with SIGBUS. mmap also needs `unsafe`, which the workspace denies. The reader streams through a buffer of up to 4 MiB and never loads the whole file. Measured parsing speed is still well above the 150 MB/s target.
+
+**D19. The timeline brush highlights a range; it doesn't zoom** (Agent E). The timeline queries its own zoom window and draws the brushed range on top, so the surrounding context stays visible; "Zoom to range" narrows the view on request. Every other view still filters on `time_range`, so the shared selection model doesn't change.
+
+**D20. Pending contract change: add `link_type` to `FrameRow`** (Agent A). A pcapng file can mix link types across interfaces; without a per-frame link type, `packet()` would decode those frames with the wrong link layer. This goes in at integration, after B's writer merges, together with `case_update_note` (Agent F) and these clarifications: `bytes_*` include retransmissions; a DNS message with no parseable question gets `query = ""` and `qtype = "TYPE0"`; `CaptureRow.path` is canonical and absolute.
