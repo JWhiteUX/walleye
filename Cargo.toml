@@ -1,0 +1,54 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/walleye-core",
+    "crates/walleye-ingest",
+    "crates/walleye-index",
+    "crates/walleye-detect",
+    "crates/walleye-case",
+    "app/src-tauri",
+    "tools/walleye-gen",
+    "tools/walleye-bench",
+    "tools/walleye-eval",
+]
+# cargo-fuzz keeps its own workspace (nightly, sanitizer flags).
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "UNLICENSED"
+publish = false
+
+# Shared versions. Crates may add their own dependencies in their own Cargo.toml;
+# anything used by more than one crate belongs here (ask the lead).
+[workspace.dependencies]
+walleye-core = { path = "crates/walleye-core" }
+walleye-ingest = { path = "crates/walleye-ingest" }
+walleye-index = { path = "crates/walleye-index" }
+walleye-detect = { path = "crates/walleye-detect" }
+walleye-case = { path = "crates/walleye-case" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+thiserror = "2"
+ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+dbg_macro = "deny"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+
+# Fast-enough debug builds for parsers and DuckDB-heavy tests.
+[profile.dev.package."*"]
+opt-level = 2

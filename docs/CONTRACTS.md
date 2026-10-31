@@ -1,0 +1,350 @@
+# Walleye contracts
+
+The interfaces between parts. **This file and `crates/walleye-core` are the source of truth.** Only the lead changes them; agents propose changes in their final report.
+
+Contract version: **1** (`walleye_core::CONTRACT_VERSION`).
+
+| § | Contract | Code |
+|---|----------|------|
+| 1 | Units and identifiers | `walleye-core/src/lib.rs` |
+| 2 | Index tables | `walleye-core/src/tables.rs`, `findings.rs` |
+| 3 | Tauri IPC commands | `walleye-core/src/backend.rs`, `ipc.rs`, `app/src-tauri/src/commands.rs`, `app/src/shared/ipc.ts` |
+| 4 | UI shared selection and cross-panel seams | `app/src/shared/*` |
+| 5 | Filter language | `walleye-core/src/fields.rs` (+ grammar below) |
+| 6 | Detection rule YAML and allowlist | `walleye-core/src/rules.rs`, `allowlist.rs` |
+| 7 | Crate APIs (ingest → index → detect → case → app) | `walleye-core/src/sink.rs` + signatures below |
+| 8 | On-disk layout | below |
+| 9 | Fixtures, labels, bench and eval | below |
+| 10 | Mock backend | `walleye-core/src/mock.rs`, `mock/`, `app/src/shared/mock.ts` |
+
+---
+
+## 1. Units and identifiers
+
+| Thing | Type | Rule |
+|---|---|---|
+| Timestamps (`ts`, `ts_*`, `first_seen`, `at`, …) | `i64` | Microseconds since Unix epoch, UTC. A JS number holds it exactly. |
+| `frame_no` | `u64` | 1-based, capture order (Wireshark numbering). |
+| `flow_id` | `u64` | Assigned sequentially from 1 by ingest when a flow opens. Always < 2^53. |
+| `capture_id` | `String` | First 16 lowercase hex chars of the capture's SHA-256. |
+| `case_id` | `String` | MVP: one case per capture, `case_id == capture_id`. |
+| `finding_id`, `ioc_id` | `String` | 16 lowercase hex chars of a stable hash (see §2). Same input → same id across runs. |
+| IP addresses | `String` | Canonical `std::net::IpAddr` text (`10.0.0.5`, `2001:db8::1`). |
+| Durations in params | seconds unless the key ends in `_ms`/`_us`. |
+| Sizes in the filter language | `B`, `KB`, `MB`, `GB` are powers of 1024. |
+
+## 2. Index tables
+
+One Parquet dataset per table, row groups sorted by time, exposed as a DuckDB view of the same name. Column names, order and nullability match the Rust structs exactly. Over IPC, `None` is `null`.
+
+| Table | Struct | Key columns | Notes |
+|---|---|---|---|
+| `captures` | `CaptureRow` | `capture_id` | `capture_id, path, sha256, size_bytes, format, first_ts, last_ts, link_type, frame_count` |
+| `frames` | `FrameRow` | `frame_no` | `frame_no, ts, file_offset, caplen, wirelen, flow_id?, direction?, tcp_flags?, payload_len`. `file_offset` points at the packet **data** (after the record header). |
+| `flows` | `FlowRow` | `flow_id` | `flow_id, ts_start, ts_end, src_ip, src_port, dst_ip, dst_port, proto, app_proto?, bytes_up, bytes_down, pkts_up, pkts_down, first_frame, last_frame`. `src` = initiator (SYN sender, else first packet). `bytes_*` count transport payload bytes. |
+| `dns` | `DnsRow` | `(flow_id, frame_no)` | `ts, flow_id, frame_no, trans_id, is_response, query, qtype, rcode?, answers LIST<VARCHAR>, ttl?`. One row per DNS message. `query` lowercase, no trailing dot. `qtype`/`rcode` are mnemonics or `TYPE<n>`/`RCODE<n>`. |
+| `http` | `HttpRow` | `(flow_id, frame_no)` | `ts, flow_id, frame_no, method?, host?, uri?, user_agent?, status?, resp_frame_no?, req_bytes, resp_bytes`. One row per request, paired with its response in order. |
+| `tls` | `TlsRow` | `(flow_id, frame_no)` | `ts, flow_id, frame_no, sni?, version?, ja4?, ja4s?, cert_subject?, cert_issuer?, cert_serial?, cert_self_signed?, cert_not_before?, cert_not_after?`. One row per ClientHello. JA4/JA4S per the FoxIO spec. |
+| `files` | `FileRow` | `(flow_id, frame_no)` | Transfer **metadata** only: `ts, flow_id, frame_no, source, direction, filename?, mime_type?, size_bytes?`. No body bytes are stored, hashed or carved. |
+| `findings` | `Finding` | `finding_id` | `finding_id, title, detector, entity_type, entity, score REAL, attack_technique?, ts_first, ts_last, reasons JSON`. `verdict` is not stored here (case store). |
+| `iocs` | `Ioc` | `ioc_id` | `ioc_id, type, value, defanged, source_finding_id?, first_seen, evidence JSON, allowlisted, allowlist_reason?` |
+
+**Reason** (`reasons[]` element): `{rule_id, signal, value, unit?, weight, explanation, attack_technique?, evidence}`.
+**Evidence**: `{flow_ids[], frame_nos[], truncated, total}`. Never empty on a reason or IOC. Lists are capped at `EVIDENCE_CAP` (200): keep the earliest, set `truncated`, report the real `total`.
+
+**Stable ids:** `finding_id = hex16(sha256("finding\0" + detector + "\0" + entity_type + "\0" + entity))`, `ioc_id = hex16(sha256("ioc\0" + type + "\0" + value))`, where `type` is the snake_case `IocType`.
+
+**Scores:** each reason contributes `weight × strength` (strength 0..1) points. A finding's score is `min(100, Σ points)` over its reasons. Reasons are sorted by `weight` descending; the top one sets `detector` and `attack_technique`. Entity for the MVP is always the internal host (`entity_type = "host"`, `entity = src_ip`).
+
+**Direction:** `up` = initiator → responder, `down` = responder → initiator.
+
+## 3. Tauri IPC commands
+
+All commands are `async`, take snake_case argument names (`#[tauri::command(rename_all = "snake_case")]`) and return `Result<T, ApiError>`. On the TS side, `app/src/shared/ipc.ts` exposes them as `api.*` and throws `WalleyeError {code, message, span}`.
+
+| Command | Args | Returns |
+|---|---|---|
+| `open_capture` | `path: string` | `JobId` (string). Opens read-only; resumes from checkpoint if the same SHA-256 was partially indexed. |
+| `ingest_status` | `job_id` | `IngestStatus {job_id, phase, pct, bytes_done, bytes_total, eta_s?, error?, resumed, session?}`. `phase`: `queued → hashing → indexing → detecting → done` or `failed`/`cancelled`. `pct` spans the whole job. `session` set when `done`. |
+| `cancel_ingest` | `job_id` | `null`. Leaves the last checkpoint so a later `open_capture` resumes. |
+| `current_capture` | — | `CaptureSession {capture, case_id} \| null` |
+| `query` | `req: QueryRequest {filter, view, time_range?, hosts?, flow_ids?, sort?, limit, cursor?}` | `Page {data: RowSet, next_cursor?, total?, sql?, elapsed_ms}`. `RowSet = {view, rows}` tagged by view. `limit` 1..10 000. `sql` has `?` placeholders, never values. `hosts`/`flow_ids` AND with the filter; within each list, OR. |
+| `timeline` | `req: TimelineRequest {filter, time_range?, bucket_ms, max_lanes}` | `Lanes {bucket_ms, range, lanes: Lane[]}`. `Lane {host, is_other, total, max_score?, buckets: Bucket[]}`. Lanes are keyed by flow initiator (`src_ip`), top `max_lanes` by flow count, then one `other` lane. `Bucket {t, dns, tls, http, bulk, other}` counts flow **starts** per kind; sparse. Bulk = flow with ≥ 1 MiB total bytes (takes precedence over its app proto). Backend may widen `bucket_ms` to keep ≤ 2000 buckets. |
+| `flow_frames` | `flow_id` | `FrameRef[] {frame_no, ts, caplen, wirelen, direction?, tcp_flags?, payload_len, summary}` in frame order. |
+| `packet` | `frame_no` | `PacketView {frame_no, ts, caplen, wirelen, link_type, flow_id?, decode_tree: DecodeNode[], bytes_hex}`. `DecodeNode {label, field?, value?, range? {start, len}, warning?, children}`; `range` indexes into the frame bytes; `field` names a filter field when one exists. |
+| `autocomplete` | `partial_filter, cursor_pos` (byte offset) | `Suggestion[] {label, insert_text, kind, detail?, replace_start, replace_end}`. `kind`: `field`, `operator`, `keyword`, `value`, `saved`. Values come from the index's top values for the field. |
+| `list_saved_queries` | — | `SavedQuery[] {name, filter, view}` |
+| `save_query` | `query: SavedQuery` | `null`. Same name replaces. Filter must parse. |
+| `delete_saved_query` | `name` | `null` |
+| `findings` | `filter?: FindingsFilter {min_score?, detector?, entity?, time_range?}` | `Finding[]` sorted by score desc, with `verdict` joined from the case. |
+| `set_verdict` | `finding_id, verdict, note` | `null`. `verdict`: `suspicious`, `benign`, `needs_review`. |
+| `iocs` | `case_id` | `Ioc[]` |
+| `export_iocs` | `case_id, format: "csv" \| "json"` | absolute path inside `<case>/exports/` |
+| `get_case` | `case_id` | `Case {case_id, capture, pins, verdicts, queries}` |
+| `case_pin` | `case_id, evidence: EvidenceRef, note` | `Pin {pin_id, evidence, note, resolved: Evidence, created_at}`. `EvidenceRef` is tagged by `kind`: `frame{frame_no}`, `flow{flow_id}`, `finding{finding_id}`, `ioc{ioc_id}`, `query{filter, view, time_range}`, `note`. The backend resolves it to frames at pin time. |
+| `case_unpin` | `case_id, pin_id` | `null` |
+| `export_report` | `case_id, format: "markdown" \| "pdf", timeline_png_base64?` | absolute path inside `<case>/exports/` |
+
+`ApiError {code, message, span?}`. `code`: `invalid_filter` (with `span` into the filter text), `invalid_argument`, `not_found`, `no_capture`, `bad_capture`, `io`, `cancelled`, `internal`. Messages never contain raw capture bytes.
+
+The backend logs every `query` call into the open case (`Case.queries`), so reports can list the queries used.
+
+**Adding a command** touches four places, in this order: `Backend` trait → `MockBackend` → `commands.rs` (+ `handler()`) → `ipc.ts` (+ `mock.ts`). Only the lead does this.
+
+## 4. UI shared state and seams (`app/src/shared`, lead-owned)
+
+**Selection** (`selection.ts`, Zustand): one store, every view subscribes.
+
+```ts
+interface Selection {
+  time_range: TimeRange | null; // timeline brush; null = whole capture
+  hosts: string[];              // lane/host clicks
+  flow_ids: number[];           // table row(s), evidence links
+  frame_no: number | null;      // packet pane
+  filter: string;               // committed filter-bar text
+}
+```
+
+| Writer | Action |
+|---|---|
+| Timeline brush | `setTimeRange` |
+| Timeline lane label / host cell | `toggleHost` / `setHosts` |
+| Session table row | `selectFlows([flow_id])`, then `selectFrame(first_frame)` |
+| Packet list row | `selectFrame` |
+| Queue evidence link | `applyEvidence(evidence)` (flows + first frame) |
+| Filter bar submit | `setFilter` |
+
+Readers build requests with `selectionScope(selection)` → `{filter, time_range, hosts, flow_ids}`. The session table queries with the full scope **except** that selecting a row must not filter the table to that row: the table passes `flow_ids: []` and highlights selected rows instead. The timeline uses `filter` + `time_range` only (it draws hosts as lanes).
+
+**Other seams:**
+
+| File | Purpose |
+|---|---|
+| `ipc.ts` | `api.*`, `WalleyeError`, `isTauri()`, `pickCaptureFile()`. The only backend access. |
+| `session.ts` | `useSession` → `{session: CaptureSession \| null}`. Set by the shell's open flow. |
+| `commands.ts` | `useRegisterCommands([...])`: register actions with optional shortcut; the shell renders the palette and owns the global key handler. Ids are `<area>.<verb>` (`timeline.zoom-in`). |
+| `caseEvents.ts` | `pinEvidence(ref, note)` from any panel; the case panel re-reads on `useCaseEvents.version` change. |
+| `snapshots.ts` | Timeline registers `() => base64Png`; report export calls `getTimelineSnapshot()`. |
+| `encoding.ts` | Event kind → label + shape + colour var; score bands. Colour is never the only signal. |
+| `format.ts` | `formatTs`, `formatTime`, `formatBytes`, `formatDuration`, `protoName`, `defang`. |
+| `theme.css` | CSS custom properties (`--wl-*`). Panels use these, not literal colours. |
+| `filterFields.ts` | Field registry for autocomplete/help, generated from Rust. |
+| `bindings/` | ts-rs output. Generated by `cargo test -p walleye-core`; never hand-edit. |
+
+**Panel exports** (the shell imports these names; each agent owns its directory):
+
+| Directory | Export | Owner |
+|---|---|---|
+| `shell/` | `AppShell` | D |
+| `table/` | `SessionTable` | D |
+| `packets/` | `PacketPane` | D |
+| `timeline/` | `TimelinePanel` | E |
+| `queue/` | `QueuePanel` | E |
+| `case/` | `CasePanel` | F |
+
+Each panel root has `data-testid="<dir>-panel"` and an accessible name. Captured strings are rendered as text only (`dangerouslySetInnerHTML` and `innerHTML` are lint errors). Indicators (domains, URLs) are never rendered as live links.
+
+## 5. Filter language
+
+Compiles to **parameterized SQL only**. Field names resolve through the registry (`walleye_core::fields::FIELDS`), whose `sql` expressions are trusted code; every literal becomes a bound parameter. No user text is ever concatenated into SQL.
+
+```ebnf
+filter      = [ or_expr ] ;
+or_expr     = and_expr , { "or" , and_expr } ;
+and_expr    = unary , { [ "and" ] , unary } ;          (* juxtaposition = and *)
+unary       = "not" , unary | "!" , unary | primary ;
+primary     = "(" , or_expr , ")"
+            | shorthand
+            | comparison
+            | bare_proto ;
+shorthand   = ( "host" | "src" | "dst" ) , ip_value
+            | "port" , integer ;
+comparison  = field , op , value
+            | field , "in" , "[" , value , { "," , value } , "]" ;
+bare_proto  = "dns" | "http" | "tls" | "tcp" | "udp" | "icmp" ;
+field       = ident , { "." , ident } ;                (* must be in FIELDS *)
+op          = "==" | "!=" | ">" | ">=" | "<" | "<=" | "~" ;
+value       = string | number | ip_value | ident ;
+ip_value    = ipv4 [ "/" , digit+ ] | ipv6 [ "/" , digit+ ] ;
+number      = digit+ [ "." digit+ ] [ unit ] ;
+unit        = "B" | "KB" | "MB" | "GB" | "us" | "ms" | "s" | "m" | "h" ;
+string      = '"' , { char - '"' - "\" | "\" , ( '"' | "\" ) } , '"' ;
+ident       = ( letter | "_" ) , { letter | digit | "_" | "-" } ;
+```
+
+Semantics:
+
+- Keywords (`and or not in host src dst port`) are case-insensitive; field names are lowercase.
+- `host X` ≡ `(src_ip == X or dst_ip == X)`; `src X` ≡ `src_ip == X`; `dst X` ≡ `dst_ip == X`; `port N` ≡ `(src_port == N or dst_port == N)`. A CIDR value means "in network".
+- Bare protocol: `dns`/`http`/`tls` ≡ `app_proto == name`; `tcp`/`udp`/`icmp` ≡ `proto == number`.
+- `~` is a case-insensitive glob (`*` any run, `?` one char) → `ILIKE ? ESCAPE '\'` with `%`, `_`, `\` in the literal escaped. On `str_list` fields it matches any element.
+- A bare `ident` value is a string (`app_proto == tls`).
+- Type errors (`bytes_up ~ "x"`, `src_ip > 5`, unknown field) are `invalid_filter` errors with a `span`.
+- Fields of another table reach the queried view via `flow_id`: on `flows`, `dns.query ~ "*.top"` → `flow_id IN (SELECT flow_id FROM dns WHERE query ILIKE ?)`; on `dns`, `bytes_up > 1MB` → `flow_id IN (SELECT flow_id FROM flows WHERE (bytes_up) > ?)`. `frames` fields only apply on the `frames` view.
+- Limits: 4 KiB of text, nesting depth 64, 256 terms. Over limit → `invalid_filter`.
+
+Example: `host 10.0.0.5 and dns.query ~ "*.top" and bytes_up > 1MB and not app_proto == tls`.
+
+## 6. Detection rules and allowlist
+
+**Rules** live in `rules/*.yaml` (one rule per file; `allowlist.yaml` is not a rule) and load at runtime. Schema (`RuleDef`, unknown keys rejected):
+
+```yaml
+id: beacon.periodic            # unique, stable; appears in Reason.rule_id
+title: Periodic outbound connections
+detector: beaconing            # beaconing | dns_entropy | dns_length | dns_subdomain_rate | dns_nxdomain_burst | dns_tunnel
+enabled: true                  # default true
+attack_technique: T1071        # T1071, T1071.004, T1568.002, T1048
+params:                        # detector-specific; numbers, strings or lists
+  min_count: 8
+  max_jitter: 0.2
+  min_duration_s: 600
+weights:                       # signal -> max points; points = weight × strength(0..1)
+  regularity: 50
+  count: 20
+  duration: 20
+  small_payload: 10
+min_score: 30                  # drop reasons below this many points
+explanation: "{src} contacted {dst} {count} times, every {interval_s}s ±{jitter_pct}%"
+```
+
+`explanation` placeholders `{name}` are filled by the detector with `render_template`; no logic, no markup.
+
+**Allowlist** (`rules/allowlist.yaml`, `Allowlist`):
+
+```yaml
+version: 1
+domains: [ { suffix: windowsupdate.com, reason: "Microsoft Update" } ]   # label-boundary suffix match
+cidrs:   [ { cidr: 13.107.4.50/32, reason: "Microsoft" } ]
+ja4:     [ { value: t13d1516h2_8daaf6152771_02713d6af862, reason: "Chrome" } ]
+```
+
+Detectors use it to suppress or down-weight reasons (and must say so in the explanation). IOC extraction keeps allowlisted IOCs but sets `allowlisted` and `allowlist_reason`. Matching lives in `walleye_core::allowlist` so both crates agree.
+
+## 7. Crate APIs
+
+The lead wires these in `app/src-tauri` during integration. Agents may add more public items but must provide these signatures (or propose a change).
+
+```rust
+// walleye-ingest (Agent A)
+pub struct IngestOptions { pub tcp_idle_timeout_s: u32 /*300*/, pub udp_idle_timeout_s: u32 /*60*/,
+                           pub checkpoint_bytes: u64 /*CHECKPOINT_BYTES*/, pub batch_rows: usize /*65_536*/ }
+impl Default for IngestOptions;
+pub struct Progress { pub bytes_done: u64, pub bytes_total: u64, pub frames: u64 }
+pub fn hash_file(path: &Path, progress: &mut dyn FnMut(u64)) -> std::io::Result<String>; // lowercase hex sha256
+pub fn ingest(path: &Path, sha256: &str, sink: &mut dyn IndexSink, opts: &IngestOptions,
+              progress: &mut dyn FnMut(Progress), cancel: &AtomicBool) -> ApiResult<CaptureRow>;
+pub fn read_frame(path: &Path, file_offset: u64, caplen: u32) -> std::io::Result<Vec<u8>>;
+pub fn decode_frame(link_type: u32, bytes: &[u8]) -> Vec<DecodeNode>; // never panics
+
+// walleye-index (Agent B)
+pub struct IndexWriter;  impl IndexSink for IndexWriter;
+impl IndexWriter { pub fn create(index_dir: &Path) -> ApiResult<Self>; }
+pub struct Index;        // Send + Sync; cheap concurrent reads
+impl Index {
+    pub fn open(index_dir: &Path) -> ApiResult<Self>;
+    pub fn capture(&self) -> ApiResult<CaptureRow>;
+    pub fn query(&self, req: &QueryRequest) -> ApiResult<Page>;
+    pub fn timeline(&self, req: &TimelineRequest, findings: &[Finding]) -> ApiResult<Lanes>;
+    pub fn flow(&self, flow_id: u64) -> ApiResult<FlowRow>;
+    pub fn frame(&self, frame_no: u64) -> ApiResult<FrameRow>;
+    pub fn flow_frames(&self, flow_id: u64) -> ApiResult<Vec<FrameRef>>;
+    pub fn autocomplete(&self, partial: &str, cursor_pos: u32) -> ApiResult<Vec<Suggestion>>;
+    pub fn findings(&self, filter: Option<&FindingsFilter>) -> ApiResult<Vec<Finding>>; // verdict = None
+    pub fn iocs(&self) -> ApiResult<Vec<Ioc>>;
+}
+impl DetectSource for Index;  impl ResultSink for Index;
+pub mod filter {
+    pub fn parse(text: &str) -> ApiResult<Expr>;
+    pub fn compile(expr: &Expr, view: View) -> ApiResult<Compiled>; // Compiled { sql: String, params: Vec<Param> }
+}
+
+// walleye-detect (Agent C)
+pub struct RuleSet;
+pub fn load_rules(dir: &Path) -> ApiResult<RuleSet>;   // all *.yaml except allowlist.yaml
+pub fn run(src: &dyn DetectSource, rules: &RuleSet, allow: &Allowlist) -> ApiResult<Vec<Finding>>;
+
+// walleye-case (Agent F)
+pub fn load_allowlist(path: &Path) -> ApiResult<Allowlist>;
+pub fn extract_iocs(findings: &[Finding], src: &dyn DetectSource, allow: &Allowlist) -> ApiResult<Vec<Ioc>>;
+pub fn defang(ioc_type: IocType, value: &str) -> String;
+pub fn refang(ioc_type: IocType, defanged: &str) -> String;     // refang(defang(x)) == x
+pub struct CaseStore;   // SQLite at <case_dir>/case.sqlite; Send
+impl CaseStore {
+    pub fn open(case_dir: &Path, capture: &CaptureRow) -> ApiResult<Self>;
+    pub fn get_case(&self) -> ApiResult<Case>;
+    pub fn pin(&self, evidence: &EvidenceRef, note: &str, resolved: &Evidence) -> ApiResult<Pin>;
+    pub fn unpin(&self, pin_id: &str) -> ApiResult<()>;
+    pub fn set_verdict(&self, finding_id: &str, verdict: Verdict, note: &str) -> ApiResult<()>;
+    pub fn verdicts(&self) -> ApiResult<Vec<VerdictEntry>>;
+    pub fn log_query(&self, entry: &QueryLogEntry) -> ApiResult<()>;
+}
+pub fn export_iocs(iocs: &[Ioc], capture: &CaptureRow, format: IocFormat, out_dir: &Path) -> ApiResult<PathBuf>;
+pub struct ReportInput<'a> { pub capture: &'a CaptureRow, pub case: &'a Case, pub findings: &'a [Finding],
+                             pub iocs: &'a [Ioc], pub timeline_png: Option<&'a [u8]> }
+pub fn export_report(input: &ReportInput, format: ReportFormat, out_dir: &Path) -> ApiResult<PathBuf>;
+```
+
+Saved queries are app-level (not per case) and stored by `app/src-tauri` in `<data_dir>/saved_queries.json`.
+
+## 8. On-disk layout
+
+`<data_dir>` = Tauri app data dir (`~/Library/Application Support/design.0xfff.walleye` on macOS, `~/.local/share/design.0xfff.walleye` on Linux), overridable with `WALLEYE_DATA`.
+
+```
+<data_dir>/
+  saved_queries.json
+  captures/<capture_id>/
+    capture.json                 # CaptureRow
+    index/                       # owned by walleye-index
+      checkpoint.json            # last accepted Checkpoint (state base64)
+      frames/ flows/ dns/ http/ tls/ files/ findings/ iocs/   # *.parquet
+    case/                        # owned by walleye-case
+      case.sqlite
+      exports/                   # iocs.csv, iocs.json, report.md, report.pdf
+```
+
+Captures are never copied, modified or written next to. Open them read-only.
+
+## 9. Fixtures, labels, bench, eval (Agent G)
+
+`$WALLEYE_FIXTURES` defaults to `~/.walleye-fixtures`; never inside the repo.
+
+```
+$WALLEYE_FIXTURES/
+  generated/<scenario>.pcap            # from walleye-gen
+  generated/<scenario>.labels.json
+  external/<sample-name>/<file>.pcap   # each in its own directory; pcap only
+```
+
+Generator: `cargo run -p walleye-gen --release -- --scenario <office|beacon|dns_tunnel|dga|scale> --seed <u64> --out <path.pcap> [--size-gb 10]`. Same seed → byte-identical output. Writes `<path>.labels.json` beside it (same stem, `.labels.json`).
+
+Labels JSON (also the format for external samples, stored in `fixtures/labels/<name>.labels.json`):
+
+```json
+{
+  "scenario": "beacon",
+  "source": "walleye-gen seed=1" ,
+  "sha256": "<hex>",
+  "c2_hosts": ["10.0.0.23"],
+  "bad_destinations": ["185.199.110.77", "cdn-update.top"],
+  "benign": false,
+  "notes": "60 s ±3% TLS beacon"
+}
+```
+
+`fixtures/LABELS.md` (committed) lists each external sample: name, source URL, SHA-256, known-bad hosts.
+
+Bench: `tools/bench/queries.txt` has one benchmark per line, `view<TAB>filter` (`#` comments). `cargo run -p walleye-bench --release -- --index <dir> --queries tools/bench/queries.txt` prints p50/p95/max per query and overall.
+
+Eval: `cargo run -p walleye-eval --release -- --findings <findings.json> --labels <labels.json> [--k 5]` prints a Markdown table: sample, C2 rank, hit@k, top-10 false-positive rate. Before integration it reads a findings JSON (`Vec<Finding>`); the lead adds an end-to-end mode in Phase 2.
+
+## 10. Mock backend
+
+`crates/walleye-core/mock/generate.mjs` (deterministic) writes `dataset.json` and `packets.json`. `MockBackend` (Rust) and `app/src/shared/mock.ts` (browser) both serve them.
+
+- Starts with no capture open; `open_capture(any path)` finishes in ~1.5 s. `WALLEYE_BACKEND=mock-open` (Tauri) or `?mock=open` (browser) starts open.
+- Filter text: only `host <ip>` terms are applied (AND-ed). Unbalanced quotes/parens → `invalid_filter` with span. Everything else is accepted and ignored.
+- Packet bytes exist for the first 120 flows and every evidence flow; other frames return `not_found` (useful for error states).
+- Scenario: `10.0.0.23` beacons to `185.199.110.77`/`cdn-update.top` every 60 s ±3 %; `10.0.0.17` DNS tunnel via `t.exfil-dns.xyz`; `10.0.0.12` DGA NXDOMAIN bursts; `10.0.0.15` periodic Windows Update (allowlisted false positive).
+- Mock export commands write to the system temp dir (Rust) or return a fake path (browser).

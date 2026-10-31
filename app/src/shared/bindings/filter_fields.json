@@ -1,0 +1,335 @@
+{
+  "bare_protocols": [
+    "dns",
+    "http",
+    "tls",
+    "tcp",
+    "udp",
+    "icmp"
+  ],
+  "fields": [
+    {
+      "doc": "Flow id",
+      "name": "flow_id",
+      "sql": "flow_id",
+      "table": "flows",
+      "ty": "int"
+    },
+    {
+      "doc": "Flow start time",
+      "name": "ts",
+      "sql": "ts_start",
+      "table": "flows",
+      "ty": "time"
+    },
+    {
+      "doc": "Flow end time",
+      "name": "ts_end",
+      "sql": "ts_end",
+      "table": "flows",
+      "ty": "time"
+    },
+    {
+      "doc": "Flow duration",
+      "name": "duration",
+      "sql": "(ts_end - ts_start)",
+      "table": "flows",
+      "ty": "duration"
+    },
+    {
+      "doc": "Initiator address",
+      "name": "src_ip",
+      "sql": "src_ip",
+      "table": "flows",
+      "ty": "ip"
+    },
+    {
+      "doc": "Responder address",
+      "name": "dst_ip",
+      "sql": "dst_ip",
+      "table": "flows",
+      "ty": "ip"
+    },
+    {
+      "doc": "Initiator port",
+      "name": "src_port",
+      "sql": "src_port",
+      "table": "flows",
+      "ty": "int"
+    },
+    {
+      "doc": "Responder port",
+      "name": "dst_port",
+      "sql": "dst_port",
+      "table": "flows",
+      "ty": "int"
+    },
+    {
+      "doc": "Transport protocol",
+      "name": "proto",
+      "sql": "proto",
+      "table": "flows",
+      "ty": "proto"
+    },
+    {
+      "doc": "Application protocol: dns, http, tls",
+      "name": "app_proto",
+      "sql": "app_proto",
+      "table": "flows",
+      "ty": "str"
+    },
+    {
+      "doc": "Bytes initiator → responder",
+      "name": "bytes_up",
+      "sql": "bytes_up",
+      "table": "flows",
+      "ty": "bytes"
+    },
+    {
+      "doc": "Bytes responder → initiator",
+      "name": "bytes_down",
+      "sql": "bytes_down",
+      "table": "flows",
+      "ty": "bytes"
+    },
+    {
+      "doc": "Total bytes",
+      "name": "bytes",
+      "sql": "(bytes_up + bytes_down)",
+      "table": "flows",
+      "ty": "bytes"
+    },
+    {
+      "doc": "Packets initiator → responder",
+      "name": "pkts_up",
+      "sql": "pkts_up",
+      "table": "flows",
+      "ty": "int"
+    },
+    {
+      "doc": "Packets responder → initiator",
+      "name": "pkts_down",
+      "sql": "pkts_down",
+      "table": "flows",
+      "ty": "int"
+    },
+    {
+      "doc": "Total packets",
+      "name": "pkts",
+      "sql": "(pkts_up + pkts_down)",
+      "table": "flows",
+      "ty": "int"
+    },
+    {
+      "doc": "Query name, lowercase",
+      "name": "dns.query",
+      "sql": "query",
+      "table": "dns",
+      "ty": "str"
+    },
+    {
+      "doc": "Query type mnemonic (A, TXT, ...)",
+      "name": "dns.qtype",
+      "sql": "qtype",
+      "table": "dns",
+      "ty": "str"
+    },
+    {
+      "doc": "Response code mnemonic (NXDOMAIN, ...)",
+      "name": "dns.rcode",
+      "sql": "rcode",
+      "table": "dns",
+      "ty": "str"
+    },
+    {
+      "doc": "Any answer RDATA",
+      "name": "dns.answer",
+      "sql": "answers",
+      "table": "dns",
+      "ty": "str_list"
+    },
+    {
+      "doc": "Minimum answer TTL",
+      "name": "dns.ttl",
+      "sql": "ttl",
+      "table": "dns",
+      "ty": "int"
+    },
+    {
+      "doc": "Message is a response",
+      "name": "dns.is_response",
+      "sql": "is_response",
+      "table": "dns",
+      "ty": "bool"
+    },
+    {
+      "doc": "Request method",
+      "name": "http.method",
+      "sql": "method",
+      "table": "http",
+      "ty": "str"
+    },
+    {
+      "doc": "Host header",
+      "name": "http.host",
+      "sql": "host",
+      "table": "http",
+      "ty": "str"
+    },
+    {
+      "doc": "Request URI",
+      "name": "http.uri",
+      "sql": "uri",
+      "table": "http",
+      "ty": "str"
+    },
+    {
+      "doc": "User-Agent header",
+      "name": "http.user_agent",
+      "sql": "user_agent",
+      "table": "http",
+      "ty": "str"
+    },
+    {
+      "doc": "Response status code",
+      "name": "http.status",
+      "sql": "status",
+      "table": "http",
+      "ty": "int"
+    },
+    {
+      "doc": "Request body bytes",
+      "name": "http.req_bytes",
+      "sql": "req_bytes",
+      "table": "http",
+      "ty": "bytes"
+    },
+    {
+      "doc": "Response body bytes",
+      "name": "http.resp_bytes",
+      "sql": "resp_bytes",
+      "table": "http",
+      "ty": "bytes"
+    },
+    {
+      "doc": "Server Name Indication",
+      "name": "tls.sni",
+      "sql": "sni",
+      "table": "tls",
+      "ty": "str"
+    },
+    {
+      "doc": "TLS version",
+      "name": "tls.version",
+      "sql": "version",
+      "table": "tls",
+      "ty": "str"
+    },
+    {
+      "doc": "JA4 client fingerprint",
+      "name": "tls.ja4",
+      "sql": "ja4",
+      "table": "tls",
+      "ty": "str"
+    },
+    {
+      "doc": "JA4S server fingerprint",
+      "name": "tls.ja4s",
+      "sql": "ja4s",
+      "table": "tls",
+      "ty": "str"
+    },
+    {
+      "doc": "Leaf certificate subject",
+      "name": "tls.cert_subject",
+      "sql": "cert_subject",
+      "table": "tls",
+      "ty": "str"
+    },
+    {
+      "doc": "Leaf certificate issuer",
+      "name": "tls.cert_issuer",
+      "sql": "cert_issuer",
+      "table": "tls",
+      "ty": "str"
+    },
+    {
+      "doc": "Leaf certificate serial (hex)",
+      "name": "tls.cert_serial",
+      "sql": "cert_serial",
+      "table": "tls",
+      "ty": "str"
+    },
+    {
+      "doc": "Leaf certificate is self-signed",
+      "name": "tls.cert_self_signed",
+      "sql": "cert_self_signed",
+      "table": "tls",
+      "ty": "bool"
+    },
+    {
+      "doc": "Transferred file name",
+      "name": "file.name",
+      "sql": "filename",
+      "table": "files",
+      "ty": "str"
+    },
+    {
+      "doc": "Declared Content-Type",
+      "name": "file.mime_type",
+      "sql": "mime_type",
+      "table": "files",
+      "ty": "str"
+    },
+    {
+      "doc": "Declared or observed size",
+      "name": "file.size",
+      "sql": "size_bytes",
+      "table": "files",
+      "ty": "bytes"
+    },
+    {
+      "doc": "Frame number",
+      "name": "frame.no",
+      "sql": "frame_no",
+      "table": "frames",
+      "ty": "int"
+    },
+    {
+      "doc": "Frame length on the wire",
+      "name": "frame.len",
+      "sql": "wirelen",
+      "table": "frames",
+      "ty": "bytes"
+    },
+    {
+      "doc": "TCP flags byte",
+      "name": "frame.tcp_flags",
+      "sql": "tcp_flags",
+      "table": "frames",
+      "ty": "int"
+    }
+  ],
+  "keywords": [
+    "and",
+    "or",
+    "not",
+    "in"
+  ],
+  "operators": [
+    "==",
+    "!=",
+    ">",
+    ">=",
+    "<",
+    "<=",
+    "~",
+    "in"
+  ],
+  "shorthands": [
+    "host",
+    "src",
+    "dst",
+    "port"
+  ]
+}

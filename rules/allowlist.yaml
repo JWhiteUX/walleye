@@ -1,0 +1,14 @@
+# Known-good destinations. Matching IOCs are kept but flagged `allowlisted`,
+# and detectors down-weight reasons whose destination matches.
+# Schema: crates/walleye-core/src/allowlist.rs. Owner: Agent F (defaults may grow).
+version: 1
+domains:
+  - { suffix: windowsupdate.com, reason: "Microsoft Update" }
+  - { suffix: update.microsoft.com, reason: "Microsoft Update" }
+  - { suffix: swcdn.apple.com, reason: "Apple software update" }
+  - { suffix: akamaiedge.net, reason: "Akamai CDN" }
+  - { suffix: cloudfront.net, reason: "Amazon CloudFront CDN" }
+  - { suffix: fastly.net, reason: "Fastly CDN" }
+cidrs:
+  - { cidr: 13.107.4.50/32, reason: "Microsoft" }
+ja4: []

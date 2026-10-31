@@ -31,3 +31,7 @@ fuzz/coverage/
 .DS_Store
 .idea/
 .vscode/
+
+# Tauri generated schemas
+app/src-tauri/gen/
+*.tsbuildinfo
