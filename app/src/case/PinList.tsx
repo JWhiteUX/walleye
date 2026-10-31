@@ -1,5 +1,6 @@
 // Pinned evidence and analyst notes: add a note, edit a note, unpin.
 import { useId, useState } from "react";
+import type { Finding } from "../shared/bindings/Finding";
 import type { Ioc } from "../shared/bindings/Ioc";
 import type { Pin } from "../shared/bindings/Pin";
 import { formatTs } from "../shared/format";
@@ -9,13 +10,14 @@ import { describePin, evidenceCount, hasEvidence } from "./describe";
 interface Props {
   pins: Pin[];
   iocs: Ioc[];
+  findings?: Finding[];
   busy: boolean;
   onAddNote: (text: string) => Promise<boolean>;
   onEditNote: (pin: Pin, text: string) => Promise<boolean>;
   onUnpin: (pin: Pin) => void;
 }
 
-export function PinList({ pins, iocs, busy, onAddNote, onEditNote, onUnpin }: Props) {
+export function PinList({ pins, iocs, findings = [], busy, onAddNote, onEditNote, onUnpin }: Props) {
   const headId = useId();
   const noteId = useId();
   const [draft, setDraft] = useState("");
@@ -66,7 +68,7 @@ export function PinList({ pins, iocs, busy, onAddNote, onEditNote, onUnpin }: Pr
         <ol className="wl-case-pins" data-testid="pin-list">
           {pins.map((p) => {
             const isNote = p.evidence.kind === "note";
-            const what = describePin(p.evidence, iocs);
+            const what = describePin(p.evidence, iocs, findings);
             const isEditing = editing?.pin_id === p.pin_id;
             return (
               <li key={p.pin_id} data-testid="pin-item" data-pin-id={p.pin_id} data-kind={p.evidence.kind}>

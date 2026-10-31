@@ -28,7 +28,7 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function CasePanel() {
   const caseId = useCaseId();
-  const { caseData, iocs, error, loaded } = useCaseData(caseId);
+  const { caseData, iocs, findings, error, loaded } = useCaseData(caseId);
   const [status, setStatus] = useState<Status>(null);
   const [busy, setBusy] = useState(false);
 
@@ -141,6 +141,7 @@ export function CasePanel() {
               <PinList
                 pins={caseData?.pins ?? []}
                 iocs={iocs}
+                findings={findings}
                 busy={busy}
                 onAddNote={onAddNote}
                 onEditNote={onEditNote}

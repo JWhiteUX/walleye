@@ -2,6 +2,7 @@
 // `useCaseEvents.version` (pinEvidence does) or this panel mutates the case.
 import { useEffect, useState } from "react";
 import type { Case } from "../shared/bindings/Case";
+import type { Finding } from "../shared/bindings/Finding";
 import type { Ioc } from "../shared/bindings/Ioc";
 import { useCaseEvents } from "../shared/caseEvents";
 import { api } from "../shared/ipc";
@@ -11,6 +12,8 @@ export interface CaseData {
   caseId: string | null;
   caseData: Case | null;
   iocs: Ioc[];
+  /** For pin titles; empty if findings could not be read. */
+  findings: Finding[];
   error: string | null;
   loaded: boolean;
 }
@@ -44,15 +47,16 @@ export function useCaseData(caseId: string | null): CaseData {
     for: null,
     caseData: null,
     iocs: [],
+    findings: [],
     error: null,
     loaded: false,
   });
   useEffect(() => {
     if (!caseId) return;
     let alive = true;
-    Promise.all([api.getCase(caseId), api.iocs(caseId)])
-      .then(([c, iocs]) => {
-        if (alive) setState({ for: caseId, caseData: c, iocs, error: null, loaded: true });
+    Promise.all([api.getCase(caseId), api.iocs(caseId), api.findings().catch(() => [] as Finding[])])
+      .then(([c, iocs, findings]) => {
+        if (alive) setState({ for: caseId, caseData: c, iocs, findings, error: null, loaded: true });
       })
       .catch((e: unknown) => {
         if (alive)
@@ -63,9 +67,16 @@ export function useCaseData(caseId: string | null): CaseData {
     };
   }, [caseId, version]);
   if (!caseId || state.for !== caseId) {
-    return { caseId, caseData: null, iocs: [], error: null, loaded: false };
+    return { caseId, caseData: null, iocs: [], findings: [], error: null, loaded: false };
   }
-  return { caseId, caseData: state.caseData, iocs: state.iocs, error: state.error, loaded: state.loaded };
+  return {
+    caseId,
+    caseData: state.caseData,
+    iocs: state.iocs,
+    findings: state.findings,
+    error: state.error,
+    loaded: state.loaded,
+  };
 }
 
 /** Tell every listener (this panel included) that the case changed. */

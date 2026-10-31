@@ -9,6 +9,7 @@ import { useSession } from "../shared/session";
 import { registerTimelineSnapshot } from "../shared/snapshots";
 import { CasePanel } from ".";
 import { describePin, evidenceCount } from "./describe";
+import type { Finding } from "../shared/bindings/Finding";
 
 const CASE_ID = "a3f1c9e07b5d2e64";
 
@@ -149,5 +150,10 @@ describe("describe helpers", () => {
       "Query on dns: (no filter)",
     );
     expect(describePin({ kind: "ioc", ioc_id: "zz" }, [])).toBe("Indicator zz");
+    expect(describePin({ kind: "finding", finding_id: "f1" }, [])).toBe("Finding f1");
+    const f = { finding_id: "f1", title: "Beaconing to x\u202E", entity: "10.0.0.5" } as unknown as Finding;
+    expect(describePin({ kind: "finding", finding_id: "f1" }, [], [f])).toBe(
+      "Finding: Beaconing to x\\u{202e} (10.0.0.5)",
+    );
   });
 });

@@ -2,9 +2,10 @@
 // the panel renders them as text nodes only (captured data is hostile).
 import type { Evidence } from "../shared/bindings/Evidence";
 import type { EvidenceRef } from "../shared/bindings/EvidenceRef";
+import type { Finding } from "../shared/bindings/Finding";
 import type { Ioc } from "../shared/bindings/Ioc";
 import type { IocType } from "../shared/bindings/IocType";
-import { formatTs } from "../shared/format";
+import { formatTs, visible } from "../shared/format";
 
 export const IOC_TYPE_LABEL: Record<IocType, string> = {
   ip: "IP",
@@ -31,14 +32,16 @@ export function hasEvidence(e: Evidence): boolean {
 }
 
 /** One-line description of what a pin points at. */
-export function describePin(ref: EvidenceRef, iocs: Ioc[]): string {
+export function describePin(ref: EvidenceRef, iocs: Ioc[], findings: Finding[] = []): string {
   switch (ref.kind) {
     case "frame":
       return `Frame ${ref.frame_no}`;
     case "flow":
       return `Flow ${ref.flow_id}`;
-    case "finding":
-      return `Finding ${ref.finding_id}`;
+    case "finding": {
+      const f = findings.find((x) => x.finding_id === ref.finding_id);
+      return f ? `Finding: ${visible(f.title)} (${visible(f.entity)})` : `Finding ${ref.finding_id}`;
+    }
     case "ioc": {
       const i = iocs.find((x) => x.ioc_id === ref.ioc_id);
       return i ? `${IOC_TYPE_LABEL[i.type]} ${i.defanged}` : `Indicator ${ref.ioc_id}`;
