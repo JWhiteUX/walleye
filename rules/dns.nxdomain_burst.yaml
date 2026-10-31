@@ -1,0 +1,21 @@
+# Bursts of failed lookups for many different registered domains: a DGA
+# walking its candidate list. Counting distinct registered domains (not names)
+# keeps search-suffix retries (www.x.com.corp.example) from looking like a burst.
+id: dns.nxdomain_burst
+title: "NXDOMAIN bursts from {src} consistent with DGA"
+detector: dns_nxdomain_burst
+attack_technique: T1568.002
+params:
+  window_s: 60
+  min_burst: 10         # distinct failed registered domains within window_s
+  burst_full: 30
+  repeat_full: 3        # bursts for full repeat points
+  entropy_low: 2.5      # bits/char of the failed second-level labels
+  entropy_high: 3.5
+  allowlist_factor: 0.25
+weights:
+  burst: 35
+  repeat: 15
+  dga_entropy: 20
+min_score: 25
+explanation: "{src} had {bursts} burst(s) of up to {peak} distinct failed domains within {window_s}s ({nx_total} NXDOMAIN total, {unique} unique, label entropy {entropy} bits/char), e.g. {example} [{breakdown}]"

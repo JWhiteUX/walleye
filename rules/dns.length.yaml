@@ -1,0 +1,20 @@
+# Long query names and labels: payload stuffed into the name.
+id: dns.length
+title: "Long DNS queries under {domain}"
+detector: dns_length
+attack_technique: T1071.004
+params:
+  min_queries: 10
+  length_low: 35        # mean query length (chars) for 0 points
+  length_high: 80       # ... for full points
+  label_low: 25         # longest label (chars) for 0 points
+  label_high: 63        # DNS maximum
+  allowlist_factor: 0.25
+  prevalence_min_hosts: 3 # domain queried by >= max(3, 30% of internal hosts): shared service, score reduced
+  prevalence_ratio: 0.3
+  prevalence_factor: 0.3
+weights:
+  query_length: 20
+  label_length: 10
+min_score: 10
+explanation: "{queries} queries from {src} under {domain} average {mean_len} chars, longest label {max_label} chars, e.g. {example} [{breakdown}]"

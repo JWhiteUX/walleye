@@ -1,0 +1,32 @@
+# Beaconing: regular check-ins from one internal host to one external address.
+# Detector docs: crates/walleye-detect/src/beacon.rs. Durations in seconds.
+# `regularity` gates the rest: count/duration/payload points are scaled by the
+# regularity strength, so busy-but-irregular traffic cannot score on volume.
+id: beacon.periodic
+title: "Beaconing to {dst_label}"
+detector: beaconing
+attack_technique: T1071
+params:
+  min_count: 8            # contacts (flow starts merged within merge_gap_s)
+  count_full: 48          # contacts for full count points (log scale)
+  min_duration_s: 300
+  duration_full_s: 3600
+  min_interval_s: 4       # faster than this is polling/streaming, not a beacon
+  max_interval_s: 21600
+  merge_gap_s: 1.0
+  jitter_full: 0.05       # MAD/median at or below this = full regularity
+  max_jitter: 0.35        # above this = not periodic (Cobalt Strike 50% jitter ≈ 0.17)
+  max_payload_cv: 1.0
+  ignore_dst_ports: [53, 67, 68, 123, 137, 138, 1900, 5353, 5355]  # DNS, DHCP, NTP, NetBIOS, SSDP, mDNS, LLMNR
+  allowlist_factor: 0.25  # rules/allowlist.yaml match (IP, or a DNS/SNI/Host name of the IP)
+  known_good_factor: 0.35 # destination name under known_good_suffixes (default list in code)
+  prevalence_min_hosts: 3 # destination shared by >= max(3, 30% of internal hosts) = fleet software
+  prevalence_ratio: 0.3
+  prevalence_factor: 0.3
+weights:
+  regularity: 45
+  count: 15
+  duration: 15
+  payload_uniformity: 15
+min_score: 35
+explanation: "{src} contacted {dst_label} on port {dst_port} {count} times, every {interval_s}s ±{jitter_pct}% (MAD) over {duration_min} min; payload size spread {payload_cv_pct}% [{breakdown}]"
