@@ -11,6 +11,16 @@ walleye-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+sha2 = "0.10"
+png = "0.18"
+miniz_oxide = "0.8"
+base64 = "0.22"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+proptest = "1.11.0"
+pulldown-cmark = { version = "0.13.6", default-features = false }
+tempfile = "3.27.0"
