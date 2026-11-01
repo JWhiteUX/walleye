@@ -1,0 +1,29 @@
+# 802.11 deauthentication / disassociation flood (CONTRACTS §11.3): one
+# transmitter sending many deauth/disassoc frames inside a short window, the
+# denial-of-service and handshake-capture tool pattern (aireplay-ng, mdk4).
+# The window gate is what keeps normal APs quiet: housekeeping (reason 6/7)
+# and idle kicks are tens to a few hundred frames spread over a capture, not
+# 50+ in one minute. Reason 3/8 sent by a station to its own AP ("I'm
+# leaving") is not counted at all. Broadcast share, targets and handshakes
+# are measured on frames sent while over the gate, and scale with the rate.
+id: wifi.deauth_flood
+title: "Deauthentication flood from {tx}"
+detector: wifi_deauth
+attack_technique: T1498
+params:
+  window_s: 60              # sliding window for the rate
+  min_count: 50             # frames inside one window before anything scores
+  rate_full: 200            # frames per window for full rate points
+  targets_full: 10          # distinct unicast targets during the burst for full points
+  handshake_window_s: 30    # EAPOL this soon after a burst counts as capture
+  handshake_full: 4         # EAPOL frames (one 4-way handshake) for full points
+  self_leave_reasons: [3, 8]
+  randomized_strength: 0.5  # a locally administered BSSID that does beacon
+weights:
+  rate: 45
+  broadcast: 10
+  targets: 15
+  spoofed_bssid: 20
+  handshake: 10
+min_score: 30
+explanation: "{tx} sent {count} deauthentication/disassociation frames over {span_min} min, up to {peak} within {window_s}s, claiming BSSID {bssid} ({ssid}); during the burst {broadcast_pct}% went to broadcast and {targets} client(s) were targeted directly (e.g. {target_examples}); reason codes {reasons}; {eapol} EAPOL handshake frame(s) followed [{breakdown}]"
