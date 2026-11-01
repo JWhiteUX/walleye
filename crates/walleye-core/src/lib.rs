@@ -20,6 +20,7 @@ pub mod mock;
 pub mod rules;
 pub mod sink;
 pub mod tables;
+pub mod text;
 
 pub use allowlist::Allowlist;
 pub use backend::Backend;

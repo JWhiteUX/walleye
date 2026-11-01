@@ -58,12 +58,12 @@ export function defang(v: string): string {
  * - variation selectors U+FE00\u2013FE0F, U+E0100\u2013E01EF
  * - Mongolian free variation selectors U+180B\u2013180D (and U+180E, Cf)
  *
- * Keep in sync with `sanitize()` in crates/walleye-case/src/report.rs.
+ * Keep in sync with `walleye_core::text::is_invisible` (crates/walleye-core/src/text.rs), used by ingest and the report.
  */
 const INVISIBLE =
   // Combining marks (CGJ, the selectors) sit outside the bracket class:
   // \p{Variation_Selector} = U+180B\u2013180D, U+180F, U+FE00\u2013FE0F, U+E0100\u2013E01EF.
-  /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u{E0000}-\u{E007F}\u2060-\u206f\u115f\u1160\u3164\uffa0\u180e]|\p{Variation_Selector}|\u034f/gu;
+  /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u{E0000}-\u{E007F}\u2060-\u206f\u115f\u1160\u3164\uffa0\u180e\u2800]|\p{Variation_Selector}|\u034f/gu;
 export function visible(v: string): string {
   return v.replace(INVISIBLE, (c) => `\\u{${c.codePointAt(0)!.toString(16)}}`);
 }

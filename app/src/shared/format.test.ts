@@ -26,3 +26,9 @@ describe("visible", () => {
     expect(visible("café 🙂 𝔸")).toBe("café 🙂 𝔸");
   });
 });
+
+describe("visible() matches the Rust set (walleye_core::text)", () => {
+  it("escapes the Braille blank and U+2065", () => {
+    expect(visible("a⠀b⁥c")).toBe("a\\u{2800}b\\u{2065}c");
+  });
+});

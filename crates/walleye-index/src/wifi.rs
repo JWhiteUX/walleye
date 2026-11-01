@@ -132,10 +132,13 @@ fn addr(a: &Option<String>) -> &str {
 /// SSIDs are attacker-chosen text that ingest keeps verbatim (including
 /// `"`); escape `\` and `"` so a summary's quoted SSID cannot be closed early
 /// and spoof the fields after it.
+/// Escapes `"` for splicing inside quotes. Ingest already stores a literal
+/// backslash as `\\` (contract §11.1), so escaping quotes alone is
+/// unambiguous and matches `walleye_ingest::wifi::quote_ssid`.
 fn escape_quoted(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
-        if c == '"' || c == '\\' {
+        if c == '"' {
             out.push('\\');
         }
         out.push(c);
@@ -254,7 +257,8 @@ mod tests {
         b.ssid = Some("Free\" ch 6 wpa3".into());
         b.security = Some("open".into());
         assert_eq!(wifi_summary(&b), "Beacon \"Free\\\" ch 6 wpa3\" ch 6 open");
-        b.ssid = Some("a\\\"".into());
+        // Stored form of the SSID `a\"`: ingest writes the backslash as `\\`.
+        b.ssid = Some("a\\\\\"".into());
         assert_eq!(wifi_summary(&b), "Beacon \"a\\\\\\\"\" ch 6 open");
         let mut p = row(WifiKind::ProbeResp);
         p.ssid = Some("x\"y".into());

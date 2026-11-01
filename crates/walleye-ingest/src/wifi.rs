@@ -570,22 +570,7 @@ pub fn is_wpa_vendor(data: &[u8]) -> bool {
 /// selectors, the Braille blank and the whole tag block. Cc is checked
 /// separately (`char::is_control`). Table from Unicode 15.1, no dependency.
 fn is_invisible(c: char) -> bool {
-    matches!(c,
-        // Cf
-        '\u{00ad}' | '\u{0600}'..='\u{0605}' | '\u{061c}' | '\u{06dd}' | '\u{070f}' |
-        '\u{0890}'..='\u{0891}' | '\u{08e2}' | '\u{180e}' | '\u{200b}'..='\u{200f}' |
-        '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206f}' |
-        '\u{feff}' | '\u{fff9}'..='\u{fffb}' | '\u{110bd}' | '\u{110cd}' |
-        '\u{13430}'..='\u{1343f}' | '\u{1bca0}'..='\u{1bca3}' | '\u{1d173}'..='\u{1d17a}' |
-        // Tag characters (incl. the Cf ones) and unassigned rest of the block.
-        '\u{e0000}'..='\u{e007f}' |
-        // Zl, Zp
-        '\u{2028}' | '\u{2029}' |
-        // Hangul fillers, Braille blank
-        '\u{115f}' | '\u{1160}' | '\u{3164}' | '\u{ffa0}' | '\u{2800}' |
-        // Combining grapheme joiner, variation selectors, Mongolian FVS
-        '\u{034f}' | '\u{fe00}'..='\u{fe0f}' | '\u{e0100}'..='\u{e01ef}' |
-        '\u{180b}'..='\u{180d}' | '\u{180f}')
+    walleye_core::text::is_invisible(c)
 }
 
 /// Combining marks (Mn) of the common combining blocks. Escaped only as the
