@@ -9,9 +9,12 @@ use crate::{
     ipc::{
         CaptureSession, Case, EvidenceRef, FindingsFilter, FrameRef, IngestStatus, IocFormat,
         JobId, Lanes, PacketView, Page, Pin, QueryRequest, ReportFormat, SavedQuery, Suggestion,
-        TimelineRequest,
+        TimeRange, TimelineRequest,
     },
 };
+
+/// Cap on `device_frames` results.
+pub const DEVICE_FRAMES_CAP: usize = 10_000;
 
 pub trait Backend: Send + Sync {
     // ---- capture lifecycle -------------------------------------------------
@@ -25,6 +28,11 @@ pub trait Backend: Send + Sync {
     fn query(&self, req: &QueryRequest) -> ApiResult<Page>;
     fn timeline(&self, req: &TimelineRequest) -> ApiResult<Lanes>;
     fn flow_frames(&self, flow_id: u64) -> ApiResult<Vec<FrameRef>>;
+    /// 802.11 frames (`wifi` rows) where `mac` is src, dst, tx or bssid, in
+    /// frame order, inside `time_range` when given. At most
+    /// `DEVICE_FRAMES_CAP`, earliest first. `mac` must be a MAC address
+    /// (`invalid_argument` otherwise); no 802.11 data → empty.
+    fn device_frames(&self, mac: &str, time_range: Option<TimeRange>) -> ApiResult<Vec<FrameRef>>;
     fn packet(&self, frame_no: u64) -> ApiResult<PacketView>;
     fn autocomplete(&self, partial_filter: &str, cursor_pos: u32) -> ApiResult<Vec<Suggestion>>;
     fn list_saved_queries(&self) -> ApiResult<Vec<SavedQuery>>;
@@ -86,6 +94,10 @@ pub fn dispatch(
         "query" => out(b.query(&arg(a, "req")?)),
         "timeline" => out(b.timeline(&arg(a, "req")?)),
         "flow_frames" => out(b.flow_frames(arg(a, "flow_id")?)),
+        "device_frames" => out(b.device_frames(
+            &arg::<String>(a, "mac")?,
+            arg::<Option<TimeRange>>(a, "time_range")?,
+        )),
         "packet" => out(b.packet(arg(a, "frame_no")?)),
         "autocomplete" => {
             out(b.autocomplete(&arg::<String>(a, "partial_filter")?, arg(a, "cursor_pos")?))

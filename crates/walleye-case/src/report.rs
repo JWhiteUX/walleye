@@ -249,6 +249,9 @@ fn view_text(v: View) -> &'static str {
         View::Tls => "tls",
         View::Files => "files",
         View::Frames => "frames",
+        View::Wifi => "wifi",
+        View::WifiAps => "wifi_aps",
+        View::WifiClients => "wifi_clients",
     }
 }
 

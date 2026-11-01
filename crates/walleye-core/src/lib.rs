@@ -15,6 +15,7 @@ pub mod error;
 pub mod fields;
 pub mod findings;
 pub mod ipc;
+pub mod mac;
 pub mod mock;
 pub mod rules;
 pub mod sink;
@@ -38,4 +39,18 @@ pub type FrameNo = u64;
 pub type FlowId = u64;
 
 /// Contract version. Bump when a breaking change lands in this crate.
-pub const CONTRACT_VERSION: u32 = 1;
+pub const CONTRACT_VERSION: u32 = 2;
+
+/// 802.11 without a radio header (LINKTYPE_IEEE802_11).
+pub const LINKTYPE_IEEE802_11: u32 = 105;
+/// 802.11 with a radiotap header (LINKTYPE_IEEE802_11_RADIOTAP), as written by
+/// the WiFi Coconut and most monitor-mode tools.
+pub const LINKTYPE_IEEE802_11_RADIOTAP: u32 = 127;
+
+/// True for link types whose frames go to the `wifi` table.
+pub fn is_wifi_link_type(link_type: u32) -> bool {
+    matches!(
+        link_type,
+        LINKTYPE_IEEE802_11 | LINKTYPE_IEEE802_11_RADIOTAP
+    )
+}

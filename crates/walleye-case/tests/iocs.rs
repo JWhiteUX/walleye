@@ -442,6 +442,7 @@ fn matches_mock_dataset_iocs() {
         dns: d.dns,
         http: d.http,
         tls: d.tls,
+        wifi: Vec::new(),
     };
     let got = extract_iocs(&d.findings, &src, &allowlist()).unwrap();
     for want in &d.iocs {

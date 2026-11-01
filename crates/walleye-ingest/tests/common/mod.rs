@@ -588,6 +588,8 @@ pub struct Rows {
     pub http: Vec<HttpRow>,
     pub tls: Vec<TlsRow>,
     pub files: Vec<FileRow>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wifi: Vec<walleye_core::WifiRow>,
 }
 
 impl Rows {
@@ -599,6 +601,7 @@ impl Rows {
             RecordBatch::Http(v) => self.http.extend(v),
             RecordBatch::Tls(v) => self.tls.extend(v),
             RecordBatch::Files(v) => self.files.extend(v),
+            RecordBatch::Wifi(v) => self.wifi.extend(v),
         }
     }
     /// Order-independent form (the index sorts rows itself).

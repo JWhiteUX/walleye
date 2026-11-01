@@ -27,6 +27,7 @@ struct Stats {
     tls_ja4s: u64,
     tls_cert: u64,
     files: u64,
+    wifi: u64,
 }
 
 impl IndexSink for Stats {
@@ -60,6 +61,7 @@ impl IndexSink for Stats {
                 self.tls_cert += v.iter().filter(|t| t.cert_subject.is_some()).count() as u64;
             }
             RecordBatch::Files(v) => self.files += v.len() as u64,
+            RecordBatch::Wifi(v) => self.wifi += v.len() as u64,
         }
         Ok(())
     }

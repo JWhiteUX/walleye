@@ -320,6 +320,9 @@ fn view_rows(d: &Dataset, view: View) -> Vec<Value> {
         View::Tls => j(&d.tls),
         View::Files => j(&d.files),
         View::Frames => j(&d.frames),
+        // The Rust mock dataset is a wired capture; the browser mock
+        // (app/src/shared/mock.ts) carries the 802.11 sample.
+        View::Wifi | View::WifiAps | View::WifiClients => Vec::new(),
     }
 }
 
@@ -333,6 +336,9 @@ fn rowset(view: View, rows: Vec<Value>) -> ApiResult<RowSet> {
         View::Tls => RowSet::Tls(serde_json::from_value(arr).map_err(e)?),
         View::Files => RowSet::Files(serde_json::from_value(arr).map_err(e)?),
         View::Frames => RowSet::Frames(serde_json::from_value(arr).map_err(e)?),
+        View::Wifi => RowSet::Wifi(serde_json::from_value(arr).map_err(e)?),
+        View::WifiAps => RowSet::WifiAps(serde_json::from_value(arr).map_err(e)?),
+        View::WifiClients => RowSet::WifiClients(serde_json::from_value(arr).map_err(e)?),
     })
 }
 
@@ -655,8 +661,17 @@ impl Backend for MockBackend {
         Ok(Lanes {
             bucket_ms,
             range,
+            lane_kind: LaneKind::Host,
             lanes,
         })
+    }
+
+    fn device_frames(&self, mac: &str, _time_range: Option<TimeRange>) -> ApiResult<Vec<FrameRef>> {
+        self.require_open()?;
+        crate::mac::parse_mac(mac).ok_or_else(|| {
+            ApiError::new(crate::ErrorCode::InvalidArgument, "mac: not a MAC address")
+        })?;
+        Ok(Vec::new())
     }
 
     fn flow_frames(&self, flow_id: u64) -> ApiResult<Vec<FrameRef>> {

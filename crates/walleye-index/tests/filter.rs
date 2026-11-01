@@ -277,15 +277,22 @@ fn every_field_compiles_on_every_applicable_view() {
             walleye_core::fields::FieldType::Str | walleye_core::fields::FieldType::StrList => {
                 "\"x\""
             }
+            walleye_core::fields::FieldType::Mac => "\"aa:bb:cc:dd:ee:ff\"",
             _ => "1",
         };
         for view in ALL_VIEWS {
             let text = format!("{} == {v}", f.name);
             let e = parse(&text).expect(&text);
             let r = compile(&e, view);
-            let frames_only =
-                f.table == walleye_core::fields::Table::Frames && view != View::Frames;
-            assert_eq!(r.is_err(), frames_only, "{text} on {view:?}");
+            use walleye_core::fields::Table as Tb;
+            let own = filter::table_of(view);
+            let wifi = |t: Tb| matches!(t, Tb::Wifi | Tb::WifiAps | Tb::WifiClients);
+            let rejected = if wifi(f.table) || wifi(own) {
+                f.table != own
+            } else {
+                f.table == Tb::Frames && view != View::Frames
+            };
+            assert_eq!(r.is_err(), rejected, "{text} on {view:?}");
         }
     }
 }

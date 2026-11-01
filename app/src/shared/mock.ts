@@ -132,7 +132,17 @@ export function mockParseFilter(filter: string): string[] {
 
 type AnyRow = Record<string, unknown>;
 const viewRows = (v: View): AnyRow[] =>
-  ({ flows: data.flows, dns: data.dns, http: data.http, tls: data.tls, files: data.files, frames: data.frames })[v] as unknown as AnyRow[];
+  ({
+    flows: data.flows,
+    dns: data.dns,
+    http: data.http,
+    tls: data.tls,
+    files: data.files,
+    frames: data.frames,
+    wifi: [],
+    wifi_aps: [],
+    wifi_clients: [],
+  })[v] as unknown as AnyRow[];
 
 function cmp(a: unknown, b: unknown): number {
   if (a === b) return 0;
@@ -243,7 +253,7 @@ function timeline(req: TimelineRequest): Lanes {
     }
   });
   if (otherTotal > 0) lanes.push({ host: "other", is_other: true, total: otherTotal, max_score: null, buckets: sorted(other) });
-  return { bucket_ms: bucketMs, range, lanes };
+  return { bucket_ms: bucketMs, range, lane_kind: "host", lanes };
 }
 
 function frameSummary(fr: FrameRow, f: FlowRow): string {
@@ -439,6 +449,12 @@ const handlers: Record<string, Handler> = {
   query: (a) => query(a.req as QueryRequest),
   timeline: (a) => timeline(a.req as TimelineRequest),
   flow_frames: (a) => flowFrames(a.flow_id as number),
+  // The browser mock is a wired capture until the Wi-Fi UI work adds an 802.11 sample.
+  device_frames: (a) => {
+    requireOpen();
+    if (!/^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i.test(s(a, "mac"))) throw err("invalid_argument", "mac: not a MAC address");
+    return [];
+  },
   packet: (a) => packet(a.frame_no as number),
   autocomplete: (a) => autocomplete(s(a, "partial_filter"), a.cursor_pos as number),
   list_saved_queries: () => [...state.saved],

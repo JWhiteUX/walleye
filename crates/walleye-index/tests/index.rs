@@ -418,6 +418,9 @@ fn page_keys(d: &RowSet) -> Vec<(u64, u64)> {
         RowSet::Http(v) => v.iter().map(|r| (r.flow_id, r.frame_no)).collect(),
         RowSet::Tls(v) => v.iter().map(|r| (r.flow_id, r.frame_no)).collect(),
         RowSet::Files(v) => v.iter().map(|r| (r.flow_id, r.frame_no)).collect(),
+        RowSet::Wifi(v) => v.iter().map(|r| (r.frame_no, 0)).collect(),
+        RowSet::WifiAps(v) => v.iter().map(|r| (r.first_frame, 0)).collect(),
+        RowSet::WifiClients(v) => v.iter().map(|r| (r.first_frame, 0)).collect(),
     }
 }
 

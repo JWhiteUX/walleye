@@ -84,6 +84,8 @@ fn view_tab(v: View) -> Tab {
         View::Tls => Tab::Tls,
         View::Files => Tab::Files,
         View::Frames => Tab::Frames,
+        // Contract v2 stub: `Index::query` rejects 802.11 views until they are implemented.
+        View::Wifi | View::WifiAps | View::WifiClients => Tab::Frames,
     }
 }
 
@@ -465,6 +467,9 @@ impl Index {
         if req.limit == 0 || req.limit > MAX_LIMIT {
             return Err(invalid(format!("limit must be 1..={MAX_LIMIT}")));
         }
+        if req.view.is_wifi() {
+            return Err(invalid("802.11 views are not implemented yet"));
+        }
         let tab = view_tab(req.view);
         let cols = tab.columns();
         let (sort_col, desc) = match &req.sort {
@@ -569,6 +574,9 @@ impl Index {
             View::Tls => RowSet::Tls(Vec::new()),
             View::Files => RowSet::Files(Vec::new()),
             View::Frames => RowSet::Frames(Vec::new()),
+            View::Wifi => RowSet::Wifi(Vec::new()),
+            View::WifiAps => RowSet::WifiAps(Vec::new()),
+            View::WifiClients => RowSet::WifiClients(Vec::new()),
         };
         while let Some(r) = rows.next().map_err(db)? {
             match &mut data {
@@ -578,6 +586,9 @@ impl Index {
                 RowSet::Tls(v) => v.push(schema::tls_from(r)?),
                 RowSet::Files(v) => v.push(schema::file_from(r)?),
                 RowSet::Frames(v) => v.push(schema::frame_from(r)?),
+                RowSet::Wifi(_) | RowSet::WifiAps(_) | RowSet::WifiClients(_) => {
+                    return Err(ApiError::internal("802.11 views are not implemented yet"));
+                }
             }
         }
         drop(rows);
@@ -759,6 +770,7 @@ impl Index {
         Ok(Lanes {
             bucket_ms,
             range,
+            lane_kind: walleye_core::ipc::LaneKind::Host,
             lanes: out,
         })
     }
@@ -795,6 +807,17 @@ impl Index {
             Some(r) => schema::frame_from(r),
             None => Err(ApiError::not_found(format!("frame {frame_no}"))),
         }
+    }
+
+    /// 802.11 frames where `mac` is src, dst, tx or bssid (contract v2,
+    /// `Backend::device_frames`). Stub until the `wifi` table lands.
+    pub fn device_frames(
+        &self,
+        mac: &str,
+        _time_range: Option<walleye_core::ipc::TimeRange>,
+    ) -> ApiResult<Vec<FrameRef>> {
+        walleye_core::mac::parse_mac(mac).ok_or_else(|| invalid("mac: not a MAC address"))?;
+        Ok(Vec::new())
     }
 
     pub fn flow_frames(&self, flow_id: u64) -> ApiResult<Vec<FrameRef>> {
@@ -1039,6 +1062,9 @@ fn truncate(d: &mut RowSet, n: usize) {
         RowSet::Tls(v) => v.truncate(n),
         RowSet::Files(v) => v.truncate(n),
         RowSet::Frames(v) => v.truncate(n),
+        RowSet::Wifi(v) => v.truncate(n),
+        RowSet::WifiAps(v) => v.truncate(n),
+        RowSet::WifiClients(v) => v.truncate(n),
     }
 }
 
@@ -1050,6 +1076,9 @@ fn rows_json(d: &RowSet) -> ApiResult<Vec<serde_json::Value>> {
         RowSet::Tls(v) => serde_json::to_value(v),
         RowSet::Files(v) => serde_json::to_value(v),
         RowSet::Frames(v) => serde_json::to_value(v),
+        RowSet::Wifi(v) => serde_json::to_value(v),
+        RowSet::WifiAps(v) => serde_json::to_value(v),
+        RowSet::WifiClients(v) => serde_json::to_value(v),
     }
     .map_err(|e| ApiError::internal(e.to_string()))?;
     match v {

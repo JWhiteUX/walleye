@@ -308,6 +308,251 @@
       "sql": "tcp_flags",
       "table": "frames",
       "ty": "int"
+    },
+    {
+      "doc": "Frame time",
+      "name": "wifi.ts",
+      "sql": "ts",
+      "table": "wifi",
+      "ty": "time"
+    },
+    {
+      "doc": "Frame number",
+      "name": "wifi.frame",
+      "sql": "frame_no",
+      "table": "wifi",
+      "ty": "int"
+    },
+    {
+      "doc": "beacon, probe_req, probe_resp, auth, deauth, assoc_req, assoc_resp, reassoc_req, reassoc_resp, disassoc, action, mgmt_other, data, null, eapol",
+      "name": "wifi.kind",
+      "sql": "kind",
+      "table": "wifi",
+      "ty": "str"
+    },
+    {
+      "doc": "Source address (SA)",
+      "name": "wifi.src",
+      "sql": "src",
+      "table": "wifi",
+      "ty": "mac"
+    },
+    {
+      "doc": "Destination address (DA)",
+      "name": "wifi.dst",
+      "sql": "dst",
+      "table": "wifi",
+      "ty": "mac"
+    },
+    {
+      "doc": "Transmitter address (TA)",
+      "name": "wifi.tx",
+      "sql": "tx",
+      "table": "wifi",
+      "ty": "mac"
+    },
+    {
+      "doc": "BSSID",
+      "name": "wifi.bssid",
+      "sql": "bssid",
+      "table": "wifi",
+      "ty": "mac"
+    },
+    {
+      "doc": "Network name (SSID element)",
+      "name": "wifi.ssid",
+      "sql": "ssid",
+      "table": "wifi",
+      "ty": "str"
+    },
+    {
+      "doc": "Advertised security: open, wep, wpa, wpa2, wpa3, wpa2/wpa3, owe",
+      "name": "wifi.security",
+      "sql": "security",
+      "table": "wifi",
+      "ty": "str"
+    },
+    {
+      "doc": "Channel number",
+      "name": "wifi.channel",
+      "sql": "channel",
+      "table": "wifi",
+      "ty": "int"
+    },
+    {
+      "doc": "Frequency (MHz)",
+      "name": "wifi.freq",
+      "sql": "freq_mhz",
+      "table": "wifi",
+      "ty": "int"
+    },
+    {
+      "doc": "Signal strength (dBm)",
+      "name": "wifi.signal",
+      "sql": "signal_dbm",
+      "table": "wifi",
+      "ty": "int"
+    },
+    {
+      "doc": "Deauth/disassoc reason or auth/assoc status code",
+      "name": "wifi.reason",
+      "sql": "reason",
+      "table": "wifi",
+      "ty": "int"
+    },
+    {
+      "doc": "Payload encrypted",
+      "name": "wifi.protected",
+      "sql": "protected",
+      "table": "wifi",
+      "ty": "bool"
+    },
+    {
+      "doc": "Retransmission",
+      "name": "wifi.retry",
+      "sql": "retry",
+      "table": "wifi",
+      "ty": "bool"
+    },
+    {
+      "doc": "802.11 frame length",
+      "name": "wifi.len",
+      "sql": "len",
+      "table": "wifi",
+      "ty": "bytes"
+    },
+    {
+      "doc": "Access point BSSID",
+      "name": "ap.bssid",
+      "sql": "bssid",
+      "table": "wifi_aps",
+      "ty": "mac"
+    },
+    {
+      "doc": "Advertised network name",
+      "name": "ap.ssid",
+      "sql": "ssid",
+      "table": "wifi_aps",
+      "ty": "str"
+    },
+    {
+      "doc": "Channel number",
+      "name": "ap.channel",
+      "sql": "channel",
+      "table": "wifi_aps",
+      "ty": "int"
+    },
+    {
+      "doc": "Advertised security",
+      "name": "ap.security",
+      "sql": "security",
+      "table": "wifi_aps",
+      "ty": "str"
+    },
+    {
+      "doc": "Beacons sent",
+      "name": "ap.beacons",
+      "sql": "beacons",
+      "table": "wifi_aps",
+      "ty": "int"
+    },
+    {
+      "doc": "Frames in this BSS",
+      "name": "ap.frames",
+      "sql": "frames",
+      "table": "wifi_aps",
+      "ty": "int"
+    },
+    {
+      "doc": "Stations seen in this BSS",
+      "name": "ap.clients",
+      "sql": "clients",
+      "table": "wifi_aps",
+      "ty": "int"
+    },
+    {
+      "doc": "Strongest signal (dBm)",
+      "name": "ap.signal",
+      "sql": "signal_max",
+      "table": "wifi_aps",
+      "ty": "int"
+    },
+    {
+      "doc": "Locally administered (randomized or spoofed) BSSID",
+      "name": "ap.randomized",
+      "sql": "randomized",
+      "table": "wifi_aps",
+      "ty": "bool"
+    },
+    {
+      "doc": "First frame time",
+      "name": "ap.first_seen",
+      "sql": "first_ts",
+      "table": "wifi_aps",
+      "ty": "time"
+    },
+    {
+      "doc": "Last frame time",
+      "name": "ap.last_seen",
+      "sql": "last_ts",
+      "table": "wifi_aps",
+      "ty": "time"
+    },
+    {
+      "doc": "Station address",
+      "name": "client.mac",
+      "sql": "mac",
+      "table": "wifi_clients",
+      "ty": "mac"
+    },
+    {
+      "doc": "Locally administered (randomized) address",
+      "name": "client.randomized",
+      "sql": "randomized",
+      "table": "wifi_clients",
+      "ty": "bool"
+    },
+    {
+      "doc": "Frames sent",
+      "name": "client.frames",
+      "sql": "frames",
+      "table": "wifi_clients",
+      "ty": "int"
+    },
+    {
+      "doc": "SSIDs it probed for",
+      "name": "client.probed",
+      "sql": "probed_ssids",
+      "table": "wifi_clients",
+      "ty": "str_list"
+    },
+    {
+      "doc": "Access points it talked to",
+      "name": "client.bssid",
+      "sql": "bssids",
+      "table": "wifi_clients",
+      "ty": "str_list"
+    },
+    {
+      "doc": "Strongest signal (dBm)",
+      "name": "client.signal",
+      "sql": "signal_max",
+      "table": "wifi_clients",
+      "ty": "int"
+    },
+    {
+      "doc": "First frame time",
+      "name": "client.first_seen",
+      "sql": "first_ts",
+      "table": "wifi_clients",
+      "ty": "time"
+    },
+    {
+      "doc": "Last frame time",
+      "name": "client.last_seen",
+      "sql": "last_ts",
+      "table": "wifi_clients",
+      "ty": "time"
     }
   ],
   "keywords": [
@@ -330,6 +575,7 @@
     "host",
     "src",
     "dst",
-    "port"
+    "port",
+    "mac"
   ]
 }

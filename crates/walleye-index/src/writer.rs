@@ -368,6 +368,8 @@ impl IndexSink for IndexWriter {
             RecordBatch::Files(v) => {
                 self.append(Tab::Files, v.iter().map(|r| Ok(schema::file_values(r))))
             }
+            // Contract v2 stub: the `wifi` table is not written yet.
+            RecordBatch::Wifi(_) => Ok(()),
         }
     }
 

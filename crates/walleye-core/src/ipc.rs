@@ -9,7 +9,7 @@ use ts_rs::TS;
 
 use crate::{
     CaptureRow, Direction, DnsRow, Evidence, FileRow, FlowId, FlowRow, FrameNo, FrameRow, HttpRow,
-    TlsRow, Ts, Verdict,
+    TlsRow, Ts, Verdict, WifiApRow, WifiClientRow, WifiRow,
 };
 
 /// Opaque ingest job handle.
@@ -72,6 +72,20 @@ pub enum View {
     Tls,
     Files,
     Frames,
+    /// 802.11 management and data frames (contract v2).
+    Wifi,
+    /// Access points, derived from `wifi`.
+    WifiAps,
+    /// Stations, derived from `wifi`.
+    WifiClients,
+}
+
+impl View {
+    /// Views over the 802.11 tables. Filters on these use only `wifi.*`,
+    /// `ap.*` and `client.*` fields; `hosts`/`flow_ids` do not apply.
+    pub fn is_wifi(self) -> bool {
+        matches!(self, View::Wifi | View::WifiAps | View::WifiClients)
+    }
 }
 
 /// Half-open `[start, end)` in microseconds.
@@ -143,6 +157,9 @@ pub enum RowSet {
     Tls(Vec<TlsRow>),
     Files(Vec<FileRow>),
     Frames(Vec<FrameRow>),
+    Wifi(Vec<WifiRow>),
+    WifiAps(Vec<WifiApRow>),
+    WifiClients(Vec<WifiClientRow>),
 }
 
 impl RowSet {
@@ -154,6 +171,9 @@ impl RowSet {
             RowSet::Tls(r) => r.len(),
             RowSet::Files(r) => r.len(),
             RowSet::Frames(r) => r.len(),
+            RowSet::Wifi(r) => r.len(),
+            RowSet::WifiAps(r) => r.len(),
+            RowSet::WifiClients(r) => r.len(),
         }
     }
     pub fn is_empty(&self) -> bool {
@@ -215,6 +235,37 @@ pub struct Bucket {
     pub http: u32,
     pub bulk: u32,
     pub other: u32,
+    /// Device lanes (802.11 captures) count **frames**, not flow starts, in
+    /// these four fields (absent on host lanes):
+    /// management frames other than deauth/disassoc and probes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub wifi_mgmt: Option<u32>,
+    /// Probe requests and responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub wifi_probe: Option<u32>,
+    /// Data, null and EAPOL frames.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub wifi_data: Option<u32>,
+    /// Deauthentication and disassociation frames.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub wifi_deauth: Option<u32>,
+}
+
+/// What a timeline lane is keyed by.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum LaneKind {
+    /// Flow initiator IP (`src_ip`). Wired and IP captures.
+    #[default]
+    Host,
+    /// 802.11 transmitter address (`wifi.tx`). Captures whose link type is
+    /// 105 or 127.
+    Device,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -237,6 +288,10 @@ pub struct Lanes {
     #[ts(type = "number")]
     pub bucket_ms: u64,
     pub range: TimeRange,
+    /// `device` for 802.11 captures: `Lane.host` is then a MAC address and
+    /// buckets use the `wifi_*` counts.
+    #[serde(default)]
+    pub lane_kind: LaneKind,
     pub lanes: Vec<Lane>,
 }
 

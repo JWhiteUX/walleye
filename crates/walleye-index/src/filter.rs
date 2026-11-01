@@ -691,6 +691,7 @@ fn type_name(t: FieldType) -> &'static str {
         FieldType::Bool => "a boolean field",
         FieldType::StrList => "a text-list field",
         FieldType::Proto => "a protocol field",
+        FieldType::Mac => "a MAC address field",
     }
 }
 
@@ -698,7 +699,9 @@ fn check_op(f: &FieldDef, op: Op, at: Span) -> ApiResult<()> {
     use FieldType as T;
     let ok = match f.ty {
         T::Int | T::Bytes | T::Time | T::Duration => op != Op::Glob,
-        T::Ip | T::Str | T::StrList => matches!(op, Op::Eq | Op::Ne | Op::Glob | Op::In),
+        T::Ip | T::Str | T::StrList | T::Mac => {
+            matches!(op, Op::Eq | Op::Ne | Op::Glob | Op::In)
+        }
         T::Bool => matches!(op, Op::Eq | Op::Ne),
         T::Proto => matches!(op, Op::Eq | Op::Ne | Op::In),
     };
@@ -785,6 +788,9 @@ fn typed_value(f: &FieldDef, op: Op, v: &Token) -> ApiResult<Lit> {
                 .ok_or_else(|| bad("an RFC 3339 time (\"2024-05-01T12:00:00Z\") or microseconds"))
         }
         T::Str | T::StrList => Ok(Lit::Str(text.to_string())),
+        T::Mac => walleye_core::mac::parse_mac(text)
+            .map(Lit::Str)
+            .ok_or_else(|| bad("a MAC address, e.g. \"aa:bb:cc:dd:ee:ff\"")),
         T::Bool => match text.to_ascii_lowercase().as_str() {
             "true" if !quoted => Ok(Lit::Bool(true)),
             "false" if !quoted => Ok(Lit::Bool(false)),
@@ -932,6 +938,18 @@ pub fn table_of(view: View) -> Table {
         View::Tls => Table::Tls,
         View::Files => Table::Files,
         View::Frames => Table::Frames,
+        View::Wifi => Table::Wifi,
+        View::WifiAps => Table::WifiAps,
+        View::WifiClients => Table::WifiClients,
+    }
+}
+
+fn wifi_view_name(t: Table) -> Option<&'static str> {
+    match t {
+        Table::Wifi => Some("Wi-Fi frames"),
+        Table::WifiAps => Some("access points"),
+        Table::WifiClients => Some("Wi-Fi clients"),
+        _ => None,
     }
 }
 
@@ -943,6 +961,9 @@ pub fn table_name(t: Table) -> &'static str {
         Table::Tls => "tls",
         Table::Files => "files",
         Table::Frames => "frames",
+        Table::Wifi => "wifi",
+        Table::WifiAps => "wifi_aps",
+        Table::WifiClients => "wifi_clients",
     }
 }
 
@@ -1032,6 +1053,23 @@ impl Compiler {
         if t == Table::Frames {
             return Err(ApiError::invalid_filter(
                 format!("`{}` only applies on the frames view", c.field.name),
+                c.span,
+            ));
+        }
+        // 802.11 tables have no flow_id: their fields apply only on their own
+        // view, and flow-family fields do not apply on them (contract v2).
+        if let Some(v) = wifi_view_name(t) {
+            return Err(ApiError::invalid_filter(
+                format!("`{}` only applies on the {v} view", c.field.name),
+                c.span,
+            ));
+        }
+        if wifi_view_name(self.view).is_some() {
+            return Err(ApiError::invalid_filter(
+                format!(
+                    "`{}` does not apply to 802.11 views; use wifi.*, ap.* or client.* fields",
+                    c.field.name
+                ),
                 c.span,
             ));
         }
@@ -1443,7 +1481,9 @@ pub(crate) fn static_suggestions(ctx: &Completion) -> Vec<walleye_core::ipc::Sug
                 FieldType::Int | FieldType::Bytes | FieldType::Time | FieldType::Duration => {
                     &["==", "!=", ">", ">=", "<", "<=", "in"]
                 }
-                FieldType::Ip | FieldType::Str | FieldType::StrList => &["==", "!=", "~", "in"],
+                FieldType::Ip | FieldType::Str | FieldType::StrList | FieldType::Mac => {
+                    &["==", "!=", "~", "in"]
+                }
                 FieldType::Bool => &["==", "!="],
                 FieldType::Proto => &["==", "!=", "in"],
             };
