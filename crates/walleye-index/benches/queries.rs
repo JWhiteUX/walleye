@@ -47,16 +47,9 @@ fn pct(v: &mut [f64], p: f64) -> f64 {
     v[i.min(v.len() - 1)]
 }
 
+/// The view's wire name (`flows`, …, `wifi`, `wifi_aps`, `wifi_clients`).
 fn view_of(s: &str) -> Option<View> {
-    Some(match s {
-        "flows" => View::Flows,
-        "dns" => View::Dns,
-        "http" => View::Http,
-        "tls" => View::Tls,
-        "files" => View::Files,
-        "frames" => View::Frames,
-        _ => return None,
-    })
+    serde_json::from_value(serde_json::Value::String(s.to_string())).ok()
 }
 
 fn time<F: FnMut()>(iters: u64, mut f: F) -> (f64, f64, f64) {
