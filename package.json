@@ -1,6 +1,7 @@
 {
   "name": "walleye",
   "private": true,
+  "license": "MIT",
   "packageManager": "pnpm@11.10.0",
   "scripts": {
     "tauri": "pnpm --dir app tauri",
