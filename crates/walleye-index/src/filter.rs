@@ -763,6 +763,12 @@ fn typed_value(f: &FieldDef, op: Op, v: &Token) -> ApiResult<Lit> {
     };
     let bad = |what: &str| ApiError::invalid_filter(format!("`{}` expects {what}", f.name), v.span);
     if op == Op::Glob {
+        // MACs are stored canonical (lowercase, `:`): normalize the pattern
+        // the same way so `AA-BB-*` matches (case alone is also covered by
+        // ILIKE, but the pattern should not depend on it).
+        if f.ty == T::Mac {
+            return Ok(Lit::Glob(text.to_ascii_lowercase().replace('-', ":")));
+        }
         return Ok(Lit::Glob(text.to_string()));
     }
     match f.ty {

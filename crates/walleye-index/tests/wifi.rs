@@ -573,6 +573,55 @@ fn ap_attributes_prefer_beacons_over_probe_responses() {
     );
 }
 
+/// One station probing for many SSIDs (and talking to many BSSIDs) gets
+/// capped lists, not a multi-MB row (review L1).
+#[test]
+fn client_lists_are_capped() {
+    use WifiKind as K;
+    let cap = walleye_index::CLIENT_LIST_CAP;
+    let mut b = B { rows: Vec::new() };
+    for i in 0..(cap as i64 * 3) {
+        b.push(
+            T + i,
+            K::ProbeReq,
+            C1,
+            BCAST,
+            C1,
+            Some(BCAST),
+            Some(&format!("ssid-{i:04}")),
+            None,
+            None,
+            None,
+            None,
+        );
+        let bss = format!("e8:00:00:00:{:02x}:{:02x}", i / 256, i % 256);
+        b.push(
+            T + i,
+            K::Data,
+            C1,
+            &bss,
+            C1,
+            Some(&bss),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+    }
+    let d = TempDir::new("caps");
+    let idx = build(d.path(), &b.rows, 127);
+    let c = clients(&idx, &req(View::WifiClients, ""));
+    assert_eq!(c.len(), 1);
+    assert_eq!(c[0].probed_ssids.len(), cap);
+    assert_eq!(c[0].bssids.len(), cap);
+    // The first values in sort order are kept.
+    assert_eq!(c[0].probed_ssids[0], "ssid-0000");
+    assert_eq!(c[0].probed_ssids[cap - 1], format!("ssid-{:04}", cap - 1));
+    assert!(c[0].bssids.windows(2).all(|w| w[0] < w[1]));
+    assert_eq!(c[0].frames, cap as u64 * 6);
+}
+
 #[test]
 fn clients_view_matches_the_contract() {
     let d = TempDir::new("clients");
@@ -660,6 +709,11 @@ fn wifi_filters_shorthand_and_rejections() {
         "C3 only as dst"
     );
     assert_eq!(frames(&idx, "mac DA:A1:19:00:00:01"), vec![8]);
+    // Upper-case / dash globs on MAC fields match stored MACs (review L4).
+    assert_eq!(
+        frames(&idx, "wifi.tx ~ \"42-00-5e*\""),
+        vec![9, 10, 18, 19, 20, 21]
+    );
     assert_eq!(
         frames(&idx, "wifi.ssid ~ \"CAFE\" or wifi.reason == 7"),
         vec![7, 18, 19, 20, 21]
