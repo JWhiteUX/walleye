@@ -852,10 +852,11 @@ impl Index {
             *slot = slot.saturating_add(n32);
         }
         let mut max_score: HashMap<&str, f64> = HashMap::new();
-        // Device lanes take only `device` findings (keyed by MAC).
+        // Device lanes take only `device` findings (keyed by MAC); host lanes
+        // take everything else.
         for f in findings
             .iter()
-            .filter(|f| !device || f.entity_type == "device")
+            .filter(|f| (f.entity_type == "device") == device)
         {
             let e = max_score.entry(f.entity.as_str()).or_insert(f.score);
             *e = e.max(f.score);

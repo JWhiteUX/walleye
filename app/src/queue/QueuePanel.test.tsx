@@ -129,7 +129,10 @@ describe("QueuePanel", () => {
   });
 
   it("registers its commands (with v-sequences) in the palette registry", async () => {
-    await renderQueue();
+    const { list } = await renderQueue();
+    // The list can render before the findings load; the verdict command acts on
+    // the first finding, so wait for it (this raced under load).
+    await waitFor(() => expect(heads(list).length).toBeGreaterThan(0));
     const cmds = useCommands.getState().commands;
     expect(cmds["queue.verdict-suspicious"]?.shortcut).toBe("v s");
     expect(cmds["queue.verdict-benign"]?.shortcut).toBe("v b");
