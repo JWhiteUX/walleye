@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bucket } from "../shared/bindings/Bucket";
 import { MARK_ENCODING, WIFI_ENCODING } from "../shared/encoding";
 import { api } from "../shared/ipc";
+import { resetCaptureKinds } from "../shared/captureKind";
 import { resetMock } from "../shared/mock";
 import { useSelection } from "../shared/selection";
 import { useSession } from "../shared/session";
@@ -108,6 +109,7 @@ describe("TimelinePanel on an 802.11 capture", () => {
   beforeEach(async () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
     resetMock({ open: true, dataset: "wifi" });
+    resetCaptureKinds();
     useSelection.getState().reset();
     useSession.getState().setSession(await api.currentCapture());
   });

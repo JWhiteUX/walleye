@@ -5,7 +5,7 @@ import type { FrameRef } from "../shared/bindings/FrameRef";
 import type { TimeRange } from "../shared/bindings/TimeRange";
 import type { Selection } from "../shared/selection";
 import { visible } from "../shared/format";
-import { macLabel } from "../shared/wifi";
+import { DEVICE_FRAMES_CAP, macLabel } from "../shared/wifi";
 
 export type FrameSource =
   | { kind: "flow"; flowId: number }
@@ -47,12 +47,16 @@ export function fetchSource(
 
 /** Heading over the frame list: says whose frames these are. */
 export function sourceTitle(src: FrameSource, count: number | null): string {
-  const n = count === null ? "" : ` (${count.toLocaleString("en-US")}${count >= 10_000 ? ", first 10,000" : ""})`;
+  const n = (capped: boolean) =>
+    count === null
+      ? ""
+      : ` (${count.toLocaleString("en-US")}${capped && count >= DEVICE_FRAMES_CAP ? `, first ${DEVICE_FRAMES_CAP.toLocaleString("en-US")}` : ""})`;
   switch (src.kind) {
     case "flow":
-      return `Frames of flow ${src.flowId}${n}`;
+      // flow_frames is not capped.
+      return `Frames of flow ${src.flowId}${n(false)}`;
     case "device":
-      return `Frames of device ${macLabel(visible(src.mac))}${src.timeRange ? " in time range" : ""}${n}`;
+      return `Frames of device ${macLabel(visible(src.mac))}${src.timeRange ? " in time range" : ""}${n(true)}`;
     case "none":
       return "Frames";
   }

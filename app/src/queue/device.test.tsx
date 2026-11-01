@@ -33,6 +33,20 @@ describe("ssidContext", () => {
     expect(ssidContext(f)).toBe('Evil" is open; trusted "Bank');
   });
 
+  it("a long escaped SSID with a quoted name inside can't make the box show that name", () => {
+    // 14 control bytes (stored escaped) then "Corp" with quotes, as quote_ssid writes it.
+    const stored = "\\u{1}".repeat(14) + '"Corp"';
+    const expl = `02:5e:00:53:e7:01 advertises ${'"' + stored.replace(/"/g, '\\"') + '"'} as open on 11`;
+    const f = { entity_type: "device", reasons: [reason(expl)] };
+    expect(ssidContext(f)).toBe(stored);
+    expect(ssidContext(f)).not.toBe("Corp");
+  });
+
+  it("shows nothing when the first quoted SSID does not parse", () => {
+    expect(ssidContext({ entity_type: "device", reasons: [reason('x advertises "never closed')] })).toBeNull();
+    expect(ssidContext({ entity_type: "device", reasons: [reason('x advertises "' + "y".repeat(300) + '" then "Corp"')] })).toBeNull();
+  });
+
   it("renders the SSID in its own element, with quotes and invisibles as text", async () => {
     resetMock({ open: true, dataset: "wifi" });
     onTestFinished(cleanup);

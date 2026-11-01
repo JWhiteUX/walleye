@@ -5,6 +5,7 @@ import type { WifiClientRow } from "../shared/bindings/WifiClientRow";
 import type { WifiRow } from "../shared/bindings/WifiRow";
 import { useCommands } from "../shared/commands";
 import { api } from "../shared/ipc";
+import { resetCaptureKinds } from "../shared/captureKind";
 import { resetMock } from "../shared/mock";
 import { useSelection } from "../shared/selection";
 import { useSession } from "../shared/session";
@@ -79,8 +80,9 @@ describe("Wi-Fi columns", () => {
   });
 
   it("quotes probed SSIDs with escapes, so a quote or comma inside one can't forge another", () => {
-    const t = cell("wifi_clients", "probed_ssids", { probed_ssids: ['a", "Bank', "b\\c", "Corp\u{E0041}"] }).text;
-    expect(t).toBe('"a\\", \\"Bank", "b\\\\c", "Corp\\\\u{e0041}"');
+    // Stored SSIDs already escape `\` (as \u{5c}); only `"` is escaped here, like quote_ssid.
+    const t = cell("wifi_clients", "probed_ssids", { probed_ssids: ['a", "Bank', "b\\u{5c}c", "Corp\u{E0041}"] }).text;
+    expect(t).toBe('"a\\", \\"Bank", "b\\u{5c}c", "Corp\\u{e0041}"');
   });
 
   it("every Wi-Fi column filter names a field of its own view", async () => {
@@ -145,6 +147,7 @@ afterAll(() => {
 describe("SessionTable on an 802.11 capture", () => {
   beforeEach(async () => {
     resetMock({ open: true, dataset: "wifi" });
+    resetCaptureKinds();
     useSelection.getState().reset();
     useTableStore.setState({ view: "flows" });
     useSession.getState().setSession(await api.currentCapture());
@@ -189,6 +192,17 @@ describe("SessionTable on an 802.11 capture", () => {
     const w = (await api.query({ filter: "", view: "wifi", limit: 1 })).data.rows[0] as WifiRow;
     expect(useSelection.getState().frame_no).toBe(w.frame_no);
     expect(useSelection.getState().device).toBe(w.tx);
+  });
+
+  it("decides 802.11 from data: a pcapng whose first interface is Ethernet still gets the Wi-Fi tabs", async () => {
+    const s = useSession.getState().session!;
+    act(() => useSession.getState().setSession({ ...s, capture: { ...s.capture, capture_id: "mixed-0001", link_type: 1 } }));
+    render(<SessionTable />);
+    const group = screen.getByRole("group", { name: "View" });
+    await waitFor(() =>
+      expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Access points", "Clients", "Wi-Fi frames"]),
+    );
+    expect(useCommands.getState().commands["table.view-wifi-aps"]?.enabled?.()).toBe(true);
   });
 
   it("does not send hosts on Wi-Fi views", async () => {

@@ -5,8 +5,7 @@ import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useRef,
 import type { Suggestion } from "../shared/bindings/Suggestion";
 import { api } from "../shared/ipc";
 import { useSelection } from "../shared/selection";
-import { useSession } from "../shared/session";
-import { isWifiCapture } from "../shared/wifi";
+import { useCaptureKind } from "../shared/captureKind";
 import { useFilterStatus } from "./filterStatus";
 import { applySuggestion, byteToUtf16, splitAtSpan, utf16ToByte } from "./filterText";
 import { visible } from "../shared/format";
@@ -30,7 +29,7 @@ export const FilterBar = forwardRef<FilterBarHandle>(function FilterBar(_props, 
   const committed = useSelection((s) => s.filter);
   const setFilter = useSelection((s) => s.setFilter);
   const problem = useFilterStatus((s) => s.problem);
-  const wifi = useSession((s) => isWifiCapture(s.session?.capture));
+  const wifi = useCaptureKind().wifi === true;
   const [draft, setDraft] = useState(committed);
   const [seen, setSeen] = useState(committed);
   // Suggestions plus the exact text they were computed for; stale ones are never shown.

@@ -8,9 +8,9 @@ import { useShallow } from "zustand/react/shallow";
 import { pinEvidence } from "../shared/caseEvents";
 import { useRegisterCommands, type Command } from "../shared/commands";
 import { useSelection } from "../shared/selection";
-import { api } from "../shared/ipc";
+
 import { useSession } from "../shared/session";
-import { isWifiCapture } from "../shared/wifi";
+import { currentCaptureKind, useCaptureKind } from "../shared/captureKind";
 import { useFilterStatus } from "../shell/filterStatus";
 import { COLUMNS, rowFrame, VIEW_LABEL, wifiRowTarget, type AnyRow } from "./columns";
 import { appendPredicate, composePredicate, fieldType } from "./predicates";
@@ -30,28 +30,6 @@ export const VIEW_KEYS: Record<TableView, string> = {
   wifi: "v w",
 };
 const EMPTY_HOSTS: string[] = [];
-
-/**
- * Whether the open 802.11 capture has any flows (one of an open network
- * does). Decides if the IP tabs are shown next to the Wi-Fi ones. null while
- * unknown; always true for wired captures.
- */
-function useHasFlows(captureId: string | null, wifi: boolean): boolean | null {
-  const [state, setState] = useState<{ id: string | null; has: boolean | null }>({ id: null, has: null });
-  useEffect(() => {
-    if (!captureId || !wifi) return;
-    let live = true;
-    api.query({ filter: "", view: "flows", limit: 1 }).then(
-      (p) => live && setState({ id: captureId, has: (p.total ?? p.data.rows.length) > 0 }),
-      () => live && setState({ id: captureId, has: false }),
-    );
-    return () => {
-      live = false;
-    };
-  }, [captureId, wifi]);
-  if (!wifi) return true;
-  return state.id === captureId ? state.has : null;
-}
 
 export function SessionTable() {
   const session = useSession((s) => s.session);
@@ -75,11 +53,12 @@ export function SessionTable() {
   const reportFilter = useFilterStatus((s) => s.report);
   const [status, setStatus] = useState("");
 
-  // 802.11 captures get the Wi-Fi tabs; the IP tabs stay only if there are flows.
+  // Captures with 802.11 rows get the Wi-Fi tabs (decided from data, so a
+  // mixed pcapng whose first interface is Ethernet still gets them); the IP
+  // tabs stay only if there are flows.
   const captureId = session?.capture.capture_id ?? null;
-  const wifiCapture = isWifiCapture(session?.capture);
-  const hasFlows = useHasFlows(captureId, wifiCapture);
-  const views = useMemo(() => visibleViews(wifiCapture, hasFlows === true), [wifiCapture, hasFlows]);
+  const { wifi, hasFlows } = useCaptureKind();
+  const views = useMemo(() => visibleViews(wifi === true, hasFlows === true), [wifi, hasFlows]);
   useEffect(() => {
     if (!views.includes(view)) setView(views[0]!);
   }, [views, view, setView]);
@@ -173,10 +152,6 @@ export function SessionTable() {
     setStatus(`Added "${r.text}" to the filter.`);
   };
 
-  const hasFlowsRef = useRef(hasFlows);
-  useEffect(() => {
-    hasFlowsRef.current = hasFlows;
-  });
   const commands = useMemo<Command[]>(
     () => [
       ...TABLE_VIEWS.map((v) => ({
@@ -186,7 +161,10 @@ export function SessionTable() {
         shortcut: VIEW_KEYS[v],
         run: () => useTableStore.getState().setView(v),
         // Only the tabs the open capture shows (see visibleViews).
-        enabled: () => visibleViews(isWifiCapture(useSession.getState().session?.capture), hasFlowsRef.current === true).includes(v),
+        enabled: () => {
+          const k = currentCaptureKind();
+          return visibleViews(k.wifi === true, k.hasFlows === true).includes(v);
+        },
       })),
       {
         id: "table.pin-flow",
