@@ -55,7 +55,9 @@ One Parquet dataset per table, row groups sorted by time, exposed as a DuckDB vi
 
 **Stable ids:** `finding_id = hex16(sha256("finding\0" + entity_type + "\0" + entity))` (no detector: a host's top reason can change between runs, and the id must not, or verdicts are orphaned), `ioc_id = hex16(sha256("ioc\0" + type + "\0" + value))`, where `type` is the snake_case `IocType`.
 
-**Scores:** each reason contributes `weight × strength` (strength 0..1) points. A finding's score is `min(100, Σ points)` over its reasons. Reasons are sorted by `weight` descending; the top one sets `detector` and `attack_technique`. Entity for the MVP is always the internal host (`entity_type = "host"`, `entity = src_ip`).
+**Device findings (contract v2):** 802.11 detectors use `entity_type = "device"`, `entity` = lowercase MAC, `detector = "wifi"`, so `finding_id = hex16(sha256("finding\0device\0" + mac))`; their evidence has frames and no flows (§11.3).
+
+**Scores:** each reason contributes `weight × strength` (strength 0..1) points. A finding's score is `min(100, Σ points)` over its reasons. Reasons are sorted by `weight` descending; the top one sets `detector` and `attack_technique`. Wired/IP findings use the internal host (`entity_type = "host"`, `entity = src_ip`); 802.11 findings use `device` (above).
 
 **Direction:** `up` = initiator → responder, `down` = responder → initiator.
 
@@ -208,9 +210,9 @@ Example: `host 10.0.0.5 and dns.query ~ "*.top" and bytes_up > 1MB and not app_p
 ```yaml
 id: beacon.periodic            # unique, stable; appears in Reason.rule_id
 title: Periodic outbound connections
-detector: beaconing            # beaconing | dns_entropy | dns_length | dns_subdomain_rate | dns_nxdomain_burst | dns_tunnel
+detector: beaconing            # beaconing | dns_entropy | dns_length | dns_subdomain_rate | dns_nxdomain_burst | dns_tunnel | http_* | wifi_deauth | wifi_evil_twin | wifi_karma
 enabled: true                  # default true
-attack_technique: T1071        # T1071, T1071.004, T1568.002, T1048
+attack_technique: T1071        # T1071, T1071.001, T1071.004, T1568.002, T1048, T1041, T1498, T1557
 params:                        # detector-specific; numbers, strings or lists
   min_count: 8
   max_jitter: 0.2
@@ -315,7 +317,7 @@ Saved queries are app-level (not per case) and stored by `app/src-tauri` in `<da
     index/                       # owned by walleye-index
       checkpoint.json            # last accepted Checkpoint (state base64); removed when complete
       manifest.json              # written last: capture row + file list; its presence = index complete
-      frames/ flows/ dns/ http/ tls/ files/ findings/ iocs/   # *.parquet
+      frames/ flows/ dns/ http/ tls/ files/ wifi/ findings/ iocs/   # *.parquet
     case/                        # owned by walleye-case
       case.sqlite
       exports/                   # iocs.csv, iocs.json, report.md, report.pdf
@@ -323,7 +325,7 @@ Saved queries are app-level (not per case) and stored by `app/src-tauri` in `<da
 
 Captures are never copied, modified or written next to. Open them read-only.
 
-`FORMAT_VERSION` (walleye-index) is 2 (frames gained `link_type`). `Index::open` returns `not_found` for an index with another version or without `manifest.json`, and the engine rebuilds it from the capture.
+`FORMAT_VERSION` (walleye-index) is 3 (2: frames gained `link_type`; 3: the `wifi/` table). `Index::open` returns `not_found` for an index with another version or without `manifest.json`, and the engine rebuilds it from the capture.
 
 **Report links.** Markdown reports cite evidence as `[frames 41, 57, 63](walleye://sha256/<capture sha256>/frames/41,57,63)` (and `…/flows/3,4`). The app does not register the `walleye://` scheme in the MVP, so a link is a stable identifier that carries the capture hash, not a live URL. `report-timeline.png` is written next to the report when the UI supplies a snapshot.
 
@@ -338,7 +340,7 @@ $WALLEYE_FIXTURES/
   external/<sample-name>/<file>.pcap   # each in its own directory; pcap only
 ```
 
-Generator: `cargo run -p walleye-gen --release -- --scenario <office|beacon|dns_tunnel|dga|scale> --seed <u64> --out <path.pcap> [--size-gb 10]`. Same seed → byte-identical output. Writes `<path>.labels.json` beside it (same stem, `.labels.json`).
+Generator: `cargo run -p walleye-gen --release -- --scenario <office|beacon|dns_tunnel|dga|scale|wifi|wifi_benign> --seed <u64> --out <path.pcap> [--size-gb 10]`. Same seed → byte-identical output. Writes `<path>.labels.json` beside it (same stem, `.labels.json`).
 
 Labels JSON (also the format for external samples, stored in `fixtures/labels/<name>.labels.json`):
 
@@ -381,22 +383,22 @@ Monitor-mode captures (WiFi Coconut, airodump-ng, Kismet) use link type **127** 
 - **Radiotap:** `it_len` at bytes 2–3 (LE) gives the header length; walk the `it_present` bitmap chain (bit 31 = another word follows) with each field's natural alignment from the start of the header, reading at least Flags (1), Channel (3: freq u16 + flags u16) and Antenna Signal (5: i8 dBm). Unknown present bits after the last field we need stop the walk (we never need fields past one we can't size). Flags bit `0x10` = FCS at the end of the 802.11 frame: drop those 4 bytes; flag `0x40` = bad FCS: keep the row and add a `warning` in the decode tree.
 - **802.11 header:** frame control (type, subtype, ToDS, FromDS, retry, protected), duration, addr1–addr3, sequence control, addr4 when ToDS && FromDS, QoS control for QoS subtypes (+ HT control when the order bit is set on QoS data). Addresses map to `src/dst/tx/bssid` per 802.11-2020 Table 9-30 (ToDS/FromDS).
 - **Rows:** one `WifiRow` per management or data frame, in frame order, via `RecordBatch::Wifi`. Control frames (type 1) produce no row. A frame that is too short for its header still gets a `FrameRow` and no `WifiRow`.
-- **Management bodies:** beacon/probe response: fixed fields (timestamp, interval, capabilities), then tagged elements. Read SSID (0), DS Parameter Set (3, channel), RSN (48), vendor WPA (221, OUI 00:50:f2 type 1). `security`: RSN with AKM SAE (8) only → `wpa3`; SAE + PSK → `wpa2/wpa3`; OWE (18) → `owe`; other RSN → `wpa2`; WPA vendor element without RSN → `wpa`; Privacy capability bit without either → `wep`; else `open`. Probe request and (re)assoc request: SSID. Deauth/disassoc: reason code; auth and (re)assoc response: status code → `reason`. SSIDs pass through the same printable-text sanitizer as other capture strings and are clipped to 32 bytes.
-- **Data frames:** unprotected data with an LLC/SNAP header (`aa aa 03 00 00 00` + ethertype) is handed to the existing IP/flow pipeline exactly like an Ethernet frame with that ethertype, so flows, DNS, HTTP and TLS work on open networks. Ethertype `0x888e` → kind `eapol` (no flow). Protected data → kind `data`, payload not parsed.
+- **Management bodies:** beacon/probe response: fixed fields (timestamp, interval, capabilities), then tagged elements. Read SSID (0), DS Parameter Set (3, channel), RSN (48), vendor WPA (221, OUI 00:50:f2 type 1). `security`: RSN with AKM SAE (8) only → `wpa3`; SAE + PSK → `wpa2/wpa3`; OWE (18) → `owe`; other RSN → `wpa2`; WPA vendor element without RSN → `wpa`; Privacy capability bit without either → `wep`; else `open`. Probe request and (re)assoc request: SSID. Deauth/disassoc: reason code; auth and (re)assoc response: status code → `reason`. SSIDs are clipped to 32 bytes; valid UTF-8 is kept (so `wifi.ssid == "Café"` works) with control, bidi/format characters and backslash escaped as `\u{…}`; invalid UTF-8 falls back to byte escapes; an all-NUL SSID becomes "". AKM 24 (SAE-EXT-KEY) counts as SAE and AKM 6 (PSK-SHA256) as PSK. With protected management frames (PMF) the deauth/disassoc/action body is encrypted and `reason` is None. Management frames always map A1/A2/A3 to DA/SA/BSSID. `len` = wirelen − radiotap length − FCS.
+- **Data frames:** unprotected data with an LLC/SNAP header (`aa aa 03 00 00 00` + ethertype) is handed to the existing IP/flow pipeline exactly like an Ethernet frame with that ethertype, so flows, DNS, HTTP and TLS work on open networks. Apple AWDL data (SNAP OUI `00:17:f2`, PID `0x0800`, 8-byte AWDL header) feeds the pipeline the same way. Ethertype `0x888e` → kind `eapol` (no flow). A-MSDU aggregates are not split (kind `data`, no flow). Protected data → kind `data`, payload not parsed.
 - **Decode tree** (`decode_frame(105|127, bytes)`): "Radiotap header" (length, present flags, channel/frequency, signal), "IEEE 802.11 <kind>" (frame control flags, duration, each address with `field` set to `wifi.src`/`wifi.dst`/`wifi.tx`/`wifi.bssid`, sequence), "Management body" (fixed fields, each tagged element with `range`), or LLC/SNAP followed by the existing IP decode, or "Encrypted data (N bytes)". Every node's `range` stays inside the frame (fuzzed).
 - **Generator** (`walleye-gen`): scenarios `wifi` and `wifi_benign` write radiotap pcap (link type 127). `wifi_benign`: 6 APs on channels 1/6/11 including a 3-AP mesh sharing one SSID and security, 25 clients (half randomized) probing, associating, EAPOL 4-way handshakes, protected data, occasional normal deauths (reason 3/8, a few per client). `wifi` adds three labelled attacks: a deauth flood (a spoofed BSSID sends ≥ 300 broadcast and unicast deauths in 2 minutes), an evil twin (an open AP advertising the SSID of a WPA2 AP, from a locally administered BSSID, on another channel) and a karma AP (one BSSID answering probe requests for ≥ 10 different SSIDs). Labels: `c2_hosts` holds the attacker MACs (the entities detectors should rank first); `bad_destinations` holds the targeted SSIDs.
 
 ### 11.2 Index (Agent W-B)
 
 - `wifi` Parquet table from `WifiRow` (column order = struct order; `kind` as its snake_case string), sorted by `(ts, frame_no)`.
-- `wifi_aps` and `wifi_clients` are DuckDB views over `wifi`, created at `Index::open` with the struct column order:
-  - **wifi_aps:** group rows with kind `beacon` or `probe_resp` by `bssid`. `ssid` = most frequent non-empty SSID, `channel`/`security` = most frequent; `beacons` = beacon rows; `frames` = all `wifi` rows with that `bssid`; `clients` = distinct unicast `src`/`dst` ≠ bssid in `data`/`null`/`eapol` rows of that bssid; `signal_max` over that AP's own transmissions (`tx = bssid`); `randomized` from the bssid; `first_frame` = min frame_no.
-  - **wifi_clients:** unicast addresses that transmitted a `probe_req`, or that appear as `src` (or `dst`) ≠ `bssid` in `data`/`null`/`eapol`/`auth`/`assoc_req`/`reassoc_req` rows, excluding every BSSID in `wifi_aps`. `frames` = rows with `tx = mac`; `probed_ssids` = sorted distinct non-empty SSIDs of its probe requests; `bssids` = sorted distinct bssids of its data/auth/assoc rows.
+- `wifi_aps` and `wifi_clients` are relations derived from `wifi`, created at `Index::open` with the struct column order: plain views below 50 000 `wifi` rows, in-memory tables materialized at open above that (plain views missed the 1 s gate at 2 M rows):
+  - **wifi_aps:** group rows with kind `beacon` or `probe_resp` by `bssid`. `ssid` = most frequent non-empty SSID, `channel`/`security` = most frequent, all taken from **beacons**, falling back to probe responses only for a BSSID that never beacons (a karma AP would otherwise show the SSID it impersonates); `first_ts`/`last_ts`/`first_frame` over every row with that `bssid`; `beacons` = beacon rows; `frames` = all `wifi` rows with that `bssid`; `clients` = distinct unicast `src`/`dst` ≠ bssid in `data`/`null`/`eapol` rows of that bssid; `signal_max` over that AP's own transmissions (`tx = bssid`); `randomized` from the bssid; `first_frame` = min frame_no.
+  - **wifi_clients:** unicast addresses that transmitted a `probe_req`, or that appear as `src` (or `dst`) ≠ `bssid` in `data`/`null`/`eapol`/`auth`/`assoc_req`/`reassoc_req` rows, excluding every BSSID in `wifi_aps`. `frames` and `signal_max` = rows with `tx = mac`; `first_ts`/`last_ts`/`first_frame` over rows where the MAC is src, dst or tx; `probed_ssids` = sorted distinct non-empty SSIDs of its probe requests; `bssids` = sorted distinct bssids of its data/auth/assoc rows.
 - Keys and default sort: `wifi` → key `frame_no`, sort `ts`; `wifi_aps` → key `bssid`, sort `beacons` desc; `wifi_clients` → key `mac`, sort `frames` desc. Paging, sort allowlist and cursors work as on other views.
 - **Filter:** `wifi.*`, `ap.*` and `client.*` fields apply only on their own view; flow-family fields and `hosts`/`flow_ids` do not apply on 802.11 views (`invalid_filter` / `invalid_argument`). `time_range` applies to `ts` (wifi) or overlap of `[first_ts, last_ts]` (aps, clients). `Mac` fields accept a quoted or bare MAC (the lexer reads `xx:xx:xx:xx:xx:xx` as one value token), compared lowercase; `~` globs. Shorthand `mac X` ≡ any address column equals X (§5 grammar: `shorthand += "mac", mac_value`). Autocomplete suggests `wifi.kind` values and top SSIDs/MACs.
-- **Timeline:** when `capture.link_type` is 105/127 (or the index has `wifi` rows and no flows), `Lanes.lane_kind = device`: lanes keyed by `tx` (top `max_lanes` by frame count, then `other`), buckets count **frames** in `wifi_mgmt` (management except probes and deauth/disassoc), `wifi_probe`, `wifi_data` (data/null/eapol) and `wifi_deauth` (deauth + disassoc); the IP kinds stay 0. The filter applies with `wifi.*` fields. `max_score` comes from `device` findings whose entity is the lane MAC.
+- **Timeline:** when `capture.link_type` is 105/127 (or the index has `wifi` rows and no flows), `Lanes.lane_kind = device`: lanes keyed by `tx` (top `max_lanes` by frame count, then `other`), frames without a `tx` go to `other`; buckets count **frames** in `wifi_mgmt` (management except probes and deauth/disassoc), `wifi_probe`, `wifi_data` (data/null/eapol) and `wifi_deauth` (deauth + disassoc); the IP kinds stay 0 and all four `wifi_*` counts are present (0 when none). Host lanes take `max_score` only from non-device findings. The filter applies with `wifi.*` fields. `max_score` comes from `device` findings whose entity is the lane MAC.
 - `Index::device_frames(mac, time_range)` → `FrameRef`s of `wifi` rows where `mac` is src, dst, tx or bssid; `summary` like `"Deauth 42:00:5e:00:53:9c → ff:ff:ff:ff:ff:ff reason 7"`, `"Beacon \"HomeNet\" ch 6 wpa2"`.
-- `DetectSource::for_each_wifi` streams `wifi` in `(ts, frame_no)` order. `FORMAT_VERSION` becomes 3.
+- `DetectSource::for_each_wifi` streams `wifi` in `(ts, frame_no)` order and yields nothing (never an error) on indexes without 802.11 rows, because the wifi rules run on every capture. `filter::Expr` has a `Mac { value, span }` variant; `Index::device_lanes()` and `walleye_index::wifi_summary` are public. `FORMAT_VERSION` becomes 3.
 
 ### 11.3 Detection (Agent W-C)
 

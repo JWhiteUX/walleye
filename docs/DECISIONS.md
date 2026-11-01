@@ -66,3 +66,9 @@ Why things are the way they are. Newest last. Stack decisions in the first block
 **D28. Device findings are keyed by MAC, and evidence is frames only.** Wi-Fi attacks have no IP host to blame, so findings use `entity_type = "device"` and the attacker's MAC; their evidence lists frames, with no flows. The UI's selection gains a focused `device` that drives the packet list (`device_frames`) without filtering the table, mirroring how a selected flow drives it today. Filtering by MAC stays in the filter language (`mac X`).
 
 **D29. No vendor (OUI) lookup in this version.** Showing "Apple" or "TP-Link" next to a MAC needs the IEEE OUI registry (about 5 MB, updated monthly). Bundling it is a v1 item; downloading it at runtime would break the no-network rule. The locally administered bit is shown instead, because it's what matters for spoofing and privacy randomization.
+
+**D30. Access-point and client lists are materialized when a capture is large.** Plain DuckDB views over `wifi` kept the lists always in step with the frames, but at 2 M frames the client list took 1.3 s per query (gate: 1 s). Above 50 000 rows the index now builds both as in-memory tables when it opens (about 0.4 s at 2 M rows; queries then take 2–16 ms). They are rebuilt on every open, so they still can't drift.
+
+**D31. SSIDs keep their Unicode.** Network names are often accented or use emoji; escaping every non-ASCII byte would make `wifi.ssid == "Café"` impossible. Valid UTF-8 is kept and only control, bidi/format characters and backslashes are escaped, the same characters `visible()` escapes in the UI (D23).
+
+**D32. Apple AWDL data feeds the flow pipeline.** In the test capture, the only unencrypted IP traffic was AWDL (AirDrop/Continuity) mDNS between nearby Apple devices, which uses its own SNAP OUI and an 8-byte header. Treating it like ordinary LLC/SNAP data gives those frames flows and makes them filterable.
