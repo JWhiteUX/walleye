@@ -6,7 +6,7 @@ export interface FilterField {
   name: string;
   table: "flows" | "dns" | "http" | "tls" | "files" | "frames" | "wifi" | "wifi_aps" | "wifi_clients";
   sql: string;
-  ty: "ip" | "int" | "bytes" | "time" | "duration" | "str" | "bool" | "str_list" | "proto" | "mac";
+  ty: "ip" | "int" | "bytes" | "time" | "duration" | "str" | "bool" | "str_list" | "proto" | "mac" | "mac_list";
   doc: string;
 }
 

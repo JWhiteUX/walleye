@@ -661,17 +661,7 @@ pub fn sanitize_ssid(full: &[u8]) -> String {
 /// SSID into a label or summary. `\` is already escaped by `sanitize_ssid`,
 /// so the result is unambiguous.
 pub fn quote_ssid(s: &str) -> String {
-    let mut q = String::with_capacity(s.len() + 2);
-    q.push('"');
-    for c in s.chars() {
-        if c == '"' {
-            q.push_str("\\\"");
-        } else {
-            q.push(c);
-        }
-    }
-    q.push('"');
-    q
+    walleye_core::text::quote_ssid(s)
 }
 
 /// IEEE 802.3 CRC-32 (the 802.11 FCS), bitwise: used once per decoded frame.

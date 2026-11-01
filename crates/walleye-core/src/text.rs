@@ -27,6 +27,24 @@ pub fn is_invisible(c: char) -> bool {
         '\u{180b}'..='\u{180d}' | '\u{180f}')
 }
 
+/// Wraps a stored SSID in quotes for splicing into text, escaping only `"`.
+/// Stored SSIDs already have `\` escaped (contract §11.1), so this form is
+/// unambiguous. Every component (ingest decode labels, index summaries,
+/// detector explanations, UI `quoteSsid`) quotes SSIDs this one way.
+pub fn quote_ssid(s: &str) -> String {
+    let mut q = String::with_capacity(s.len() + 2);
+    q.push('"');
+    for c in s.chars() {
+        if c == '"' {
+            q.push_str("\\\"");
+        } else {
+            q.push(c);
+        }
+    }
+    q.push('"');
+    q
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -49,5 +67,12 @@ mod tests {
         for c in ['a', 'é', '😀', ' ', '"'] {
             assert!(!is_invisible(c), "{c}");
         }
+    }
+
+    #[test]
+    fn quote_ssid_escapes_only_quotes() {
+        assert_eq!(quote_ssid("Free\" ch 6"), "\"Free\\\" ch 6\"");
+        // A stored literal backslash is already `\\`; it is not doubled again.
+        assert_eq!(quote_ssid("a\\\\b"), "\"a\\\\b\"");
     }
 }

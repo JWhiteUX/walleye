@@ -277,7 +277,9 @@ fn every_field_compiles_on_every_applicable_view() {
             walleye_core::fields::FieldType::Str | walleye_core::fields::FieldType::StrList => {
                 "\"x\""
             }
-            walleye_core::fields::FieldType::Mac => "\"aa:bb:cc:dd:ee:ff\"",
+            walleye_core::fields::FieldType::Mac | walleye_core::fields::FieldType::MacList => {
+                "\"aa:bb:cc:dd:ee:ff\""
+            }
             _ => "1",
         };
         for view in ALL_VIEWS {

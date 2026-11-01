@@ -727,6 +727,7 @@ fn type_name(t: FieldType) -> &'static str {
         FieldType::StrList => "a text-list field",
         FieldType::Proto => "a protocol field",
         FieldType::Mac => "a MAC address field",
+        FieldType::MacList => "a MAC-list field",
     }
 }
 
@@ -734,7 +735,7 @@ fn check_op(f: &FieldDef, op: Op, at: Span) -> ApiResult<()> {
     use FieldType as T;
     let ok = match f.ty {
         T::Int | T::Bytes | T::Time | T::Duration => op != Op::Glob,
-        T::Ip | T::Str | T::StrList | T::Mac => {
+        T::Ip | T::Str | T::StrList | T::Mac | T::MacList => {
             matches!(op, Op::Eq | Op::Ne | Op::Glob | Op::In)
         }
         T::Bool => matches!(op, Op::Eq | Op::Ne),
@@ -766,7 +767,7 @@ fn typed_value(f: &FieldDef, op: Op, v: &Token) -> ApiResult<Lit> {
         // MACs are stored canonical (lowercase, `:`): normalize the pattern
         // the same way so `AA-BB-*` matches (case alone is also covered by
         // ILIKE, but the pattern should not depend on it).
-        if f.ty == T::Mac {
+        if matches!(f.ty, T::Mac | T::MacList) {
             return Ok(Lit::Glob(text.to_ascii_lowercase().replace('-', ":")));
         }
         return Ok(Lit::Glob(text.to_string()));
@@ -829,7 +830,7 @@ fn typed_value(f: &FieldDef, op: Op, v: &Token) -> ApiResult<Lit> {
                 .ok_or_else(|| bad("an RFC 3339 time (\"2024-05-01T12:00:00Z\") or microseconds"))
         }
         T::Str | T::StrList => Ok(Lit::Str(text.to_string())),
-        T::Mac => walleye_core::mac::parse_mac(text)
+        T::Mac | T::MacList => walleye_core::mac::parse_mac(text)
             .map(Lit::Str)
             .ok_or_else(|| bad("a MAC address, e.g. \"aa:bb:cc:dd:ee:ff\"")),
         T::Bool => match text.to_ascii_lowercase().as_str() {
@@ -1191,7 +1192,7 @@ impl Compiler {
                     return Err(ApiError::invalid_filter("expected a pattern", c.span));
                 };
                 let pat = glob_to_like(g);
-                if c.field.ty == FieldType::StrList {
+                if matches!(c.field.ty, FieldType::StrList | FieldType::MacList) {
                     out.push_str("list_bool_or(list_transform(");
                     out.push_str(col);
                     out.push_str(", lambda x: x ILIKE ");
@@ -1214,7 +1215,7 @@ impl Compiler {
         if vs.is_empty() {
             return Err(ApiError::invalid_filter("expected a value", c.span));
         }
-        let list = c.field.ty == FieldType::StrList;
+        let list = matches!(c.field.ty, FieldType::StrList | FieldType::MacList);
         // Fast path: scalar exact values → col IN (?, ...).
         let simple: Option<Vec<Param>> = vs
             .iter()
@@ -1557,9 +1558,11 @@ pub(crate) fn static_suggestions(ctx: &Completion) -> Vec<walleye_core::ipc::Sug
                 FieldType::Int | FieldType::Bytes | FieldType::Time | FieldType::Duration => {
                     &["==", "!=", ">", ">=", "<", "<=", "in"]
                 }
-                FieldType::Ip | FieldType::Str | FieldType::StrList | FieldType::Mac => {
-                    &["==", "!=", "~", "in"]
-                }
+                FieldType::Ip
+                | FieldType::Str
+                | FieldType::StrList
+                | FieldType::Mac
+                | FieldType::MacList => &["==", "!=", "~", "in"],
                 FieldType::Bool => &["==", "!="],
                 FieldType::Proto => &["==", "!=", "in"],
             };

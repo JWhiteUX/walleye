@@ -45,6 +45,9 @@ pub enum FieldType {
     /// MAC address `aa:bb:cc:dd:ee:ff` (quoted or bare; case-insensitive,
     /// compared lowercase). `~` globs like `Str`.
     Mac,
+    /// List of MAC addresses; values normalize like `Mac`, matching like
+    /// `StrList` (any element).
+    MacList,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -405,7 +408,7 @@ pub const FIELDS: &[FieldDef] = &[
         "client.bssid",
         WifiClients,
         "bssids",
-        T::StrList,
+        T::MacList,
         "Access points it talked to",
     ),
     f(

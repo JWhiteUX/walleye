@@ -1243,7 +1243,9 @@ fn value_source(f: &FieldDef) -> Option<String> {
         FieldType::Str | FieldType::Ip | FieldType::Mac => {
             Some(format!("SELECT {} AS v FROM {table}", f.sql))
         }
-        FieldType::StrList => Some(format!("SELECT unnest({}) AS v FROM {table}", f.sql)),
+        FieldType::StrList | FieldType::MacList => {
+            Some(format!("SELECT unnest({}) AS v FROM {table}", f.sql))
+        }
         _ => None,
     }
 }

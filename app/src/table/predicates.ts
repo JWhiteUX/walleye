@@ -45,7 +45,8 @@ export function composePredicate(field: string, ty: FieldType, raw: string): Com
       if (!IPV4.test(v) && !IPV6.test(v)) return { ok: false, error: "Use an IP address or CIDR." };
       return { ok: true, text: `${field} ${neg ? "!=" : "=="} ${v}` };
     }
-    case "mac": {
+    case "mac":
+    case "mac_list": {
       const neg = input.startsWith("!=");
       const v = (neg ? input.slice(2) : input.replace(/^==/, "")).trim().toLowerCase();
       if (/[*?]/.test(v)) {

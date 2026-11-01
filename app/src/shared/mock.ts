@@ -581,7 +581,7 @@ function topValues(xs: string[]): string[] {
 
 function wifiValues(w: WifiDataset, f: FilterField): string[] {
   if (f.name === "wifi.kind") return f.doc.split(/,\s*/);
-  if (f.ty !== "str" && f.ty !== "str_list") return [];
+  if (f.ty !== "str" && f.ty !== "str_list" && f.ty !== "mac_list") return [];
   const src = (f.table === "wifi_aps" ? w.wifi_aps : f.table === "wifi_clients" ? w.wifi_clients : w.wifi) as unknown as AnyRow[];
   return topValues(
     src.flatMap((r) => {

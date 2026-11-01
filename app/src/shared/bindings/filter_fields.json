@@ -531,7 +531,7 @@
       "name": "client.bssid",
       "sql": "bssids",
       "table": "wifi_clients",
-      "ty": "str_list"
+      "ty": "mac_list"
     },
     {
       "doc": "Strongest signal (dBm)",

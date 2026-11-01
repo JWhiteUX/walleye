@@ -129,26 +129,12 @@ fn addr(a: &Option<String>) -> &str {
     a.as_deref().unwrap_or("?")
 }
 
-/// SSIDs are attacker-chosen text that ingest keeps verbatim (including
-/// `"`); escape `\` and `"` so a summary's quoted SSID cannot be closed early
+/// SSIDs are attacker-chosen text that ingest keeps with `"` raw; quote them
+/// with the shared helper so a summary's quoted SSID cannot be closed early
 /// and spoof the fields after it.
-/// Escapes `"` for splicing inside quotes. Ingest already stores a literal
-/// backslash as `\\` (contract §11.1), so escaping quotes alone is
-/// unambiguous and matches `walleye_ingest::wifi::quote_ssid`.
-fn escape_quoted(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        if c == '"' {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out
-}
-
 fn ssid_text(s: &Option<String>, empty: &str) -> String {
     match s.as_deref() {
-        Some(s) if !s.is_empty() => format!("\"{}\"", escape_quoted(s)),
+        Some(s) if !s.is_empty() => walleye_core::text::quote_ssid(s),
         _ => empty.to_string(),
     }
 }
