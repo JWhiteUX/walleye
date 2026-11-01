@@ -7,7 +7,7 @@ mod wifi_synth;
 use std::path::{Path, PathBuf};
 
 use walleye_core::{
-    CaptureFormat, CaptureRow, ErrorCode, Evidence, Finding, FrameRow, Reason, WifiApRow,
+    CaptureFormat, CaptureRow, ErrorCode, Evidence, Finding, FlowRow, FrameRow, Reason, WifiApRow,
     WifiClientRow, WifiKind, WifiRow,
     ipc::{LaneKind, QueryRequest, RowSet, Sort, SuggestionKind, TimeRange, TimelineRequest, View},
     sink::{DetectSource, IndexSink, RecordBatch},
@@ -671,6 +671,9 @@ fn clients_view_matches_the_contract() {
             .collect()
     };
     assert_eq!(one("client.probed == Cafe"), vec![C1]);
+    // client.bssid is a MAC list: any case or separator matches.
+    assert_eq!(one("client.bssid == \"E8-00-5e-00-53-88\""), vec![C1]);
+    assert_eq!(one("client.bssid == E8:00:5e:00:53:88"), vec![C1]);
     assert_eq!(one("client.probed ~ \"home*\""), vec![C1]);
     assert_eq!(one("client.randomized == true"), vec![C2]);
     assert_eq!(one(&format!("client.bssid == \"{AP3}\"")), vec![C3]);
@@ -912,6 +915,85 @@ fn device_timeline_counts_frames_per_transmitter() {
         tl("bytes_up > 1", 10).expect_err("flow field").code,
         ErrorCode::InvalidFilter
     );
+}
+
+/// An open-network 802.11 capture also has flows: a flow-only timeline
+/// filter falls back to host lanes for that request; wifi filters (and the
+/// empty filter) keep device lanes; a filter valid for neither errors.
+#[test]
+fn timeline_filter_falls_back_to_host_lanes_on_wifi_captures_with_flows() {
+    let rows = dataset();
+    let cap = wifi_capture(&rows, 127);
+    let d = TempDir::new("tl-fallback");
+    let mut w = IndexWriter::create(d.path()).expect("create");
+    w.begin(&cap).expect("begin");
+    w.write(RecordBatch::Frames(frames_of(&rows)))
+        .expect("frames");
+    w.write(RecordBatch::Wifi(rows.clone())).expect("wifi");
+    w.write(RecordBatch::Flows(vec![FlowRow {
+        flow_id: 1,
+        ts_start: T + 13 * SEC,
+        ts_end: T + 14 * SEC,
+        src_ip: "10.0.0.5".into(),
+        src_port: 50_000,
+        dst_ip: "93.184.216.34".into(),
+        dst_port: 80,
+        proto: 6,
+        app_proto: Some("http".into()),
+        bytes_up: 100,
+        bytes_down: 200,
+        pkts_up: 1,
+        pkts_down: 1,
+        first_frame: 14,
+        last_frame: 15,
+    }]))
+    .expect("flows");
+    w.finish(&cap).expect("finish");
+    let idx = Index::open(d.path()).expect("open");
+    assert!(idx.device_lanes());
+    let tl = |filter: &str| {
+        idx.timeline(
+            &TimelineRequest {
+                filter: filter.into(),
+                time_range: None,
+                bucket_ms: 100_000,
+                max_lanes: 10,
+            },
+            &[],
+        )
+    };
+    for f in ["", "wifi.kind == deauth", "mac 42:00:5e:00:53:9c"] {
+        assert_eq!(tl(f).expect(f).lane_kind, LaneKind::Device, "{f:?}");
+    }
+    let host = tl("host 10.0.0.5").expect("host filter");
+    assert_eq!(host.lane_kind, LaneKind::Host);
+    assert_eq!(host.lanes.len(), 1);
+    assert_eq!(host.lanes[0].host, "10.0.0.5");
+    assert_eq!(host.lanes[0].buckets[0].http, 1);
+    assert!(host.lanes[0].buckets[0].wifi_mgmt.is_none());
+    let dns = tl("dns.query ~ \"*.x\"").expect("dns filter");
+    assert_eq!(dns.lane_kind, LaneKind::Host);
+    assert!(dns.lanes.is_empty());
+    // Valid for neither view: the wifi compile error is returned.
+    let e = tl("wifi.kind == deauth and host 10.0.0.5").expect_err("mixed");
+    assert_eq!(e.code, ErrorCode::InvalidFilter);
+    assert!(e.message.contains("802.11"), "{}", e.message);
+
+    // Without flows a flow-only filter still errors on device lanes.
+    let d2 = TempDir::new("tl-noflows");
+    let idx2 = build(d2.path(), &rows, 127);
+    let e = idx2
+        .timeline(
+            &TimelineRequest {
+                filter: "host 10.0.0.5".into(),
+                time_range: None,
+                bucket_ms: 1000,
+                max_lanes: 5,
+            },
+            &[],
+        )
+        .expect_err("no flows");
+    assert_eq!(e.code, ErrorCode::InvalidFilter);
 }
 
 #[test]
@@ -1289,20 +1371,29 @@ fn wifi_views_at_scale() {
         "| device timeline, 50 lanes | | | | {:.1} | {p95:.1} | |",
         pct(&mut v, 0.5)
     );
-    let ap = wifi_synth::mac(0xe8, 1);
-    let mut v: Vec<f64> = (0..10)
-        .map(|_| {
-            let t = std::time::Instant::now();
-            idx.device_frames(&ap, None).expect("df");
-            t.elapsed().as_secs_f64() * 1000.0
-        })
-        .collect();
-    let p95 = pct(&mut v, 0.95);
-    worst = worst.max(p95);
-    println!(
-        "| device_frames(AP) | | | | {:.1} | {p95:.1} | |",
-        pct(&mut v, 0.5)
-    );
+    // A ~1 000-frame AP, and broadcast (~600 k matches, hits the cap).
+    for (name, mac) in [
+        ("device_frames(AP)", wifi_synth::mac(0xe8, 1)),
+        (
+            "device_frames(broadcast, capped)",
+            wifi_synth::BROADCAST.to_string(),
+        ),
+    ] {
+        let mut n = 0;
+        let mut v: Vec<f64> = (0..10)
+            .map(|_| {
+                let t = std::time::Instant::now();
+                n = idx.device_frames(&mac, None).expect("df").len();
+                t.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect();
+        let p95 = pct(&mut v, 0.95);
+        worst = worst.max(p95);
+        println!(
+            "| {name} | | | {n} | {:.1} | {p95:.1} | |",
+            pct(&mut v, 0.5)
+        );
+    }
     println!("\nworst p95 {worst:.1} ms (gate < 1000 ms)");
     assert!(worst < 1000.0, "p95 gate");
 }

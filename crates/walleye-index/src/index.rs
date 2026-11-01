@@ -63,6 +63,8 @@ pub struct Index {
     /// Timeline lanes are 802.11 devices (CONTRACTS §11.2): link type 105/127,
     /// or `wifi` rows and no flows.
     device_lanes: bool,
+    /// The capture has at least one flow (open-network 802.11 captures can).
+    has_flows: bool,
 }
 
 struct Lease<'a> {
@@ -318,11 +320,13 @@ impl Index {
             pool: Mutex::new(Vec::new()),
             top_values: Mutex::new(HashMap::new()),
             device_lanes: false,
+            has_flows: false,
         };
         idx.create_views()?;
         let wifi_rows = idx.create_wifi_views()?;
+        idx.has_flows = idx.count_rows("flows")? > 0;
         idx.device_lanes = walleye_core::is_wifi_link_type(idx.capture.link_type)
-            || (wifi_rows > 0 && idx.count_rows("flows")? == 0);
+            || (wifi_rows > 0 && !idx.has_flows);
         // Sandbox: only the index directory is readable/writable, and the
         // configuration cannot be changed afterwards.
         {
@@ -770,9 +774,24 @@ impl Index {
     }
 
     pub fn timeline(&self, req: &TimelineRequest, findings: &[Finding]) -> ApiResult<Lanes> {
-        let device = self.device_lanes;
-        let view = if device { View::Wifi } else { View::Flows };
-        let c = self.compile_filter(&req.filter, view)?;
+        // Device lanes take the filter against `wifi`. An 802.11 capture of
+        // an open network also has flows: a flow-only filter (`host X`,
+        // `dns.query ~ …`) then gives host lanes for this request instead of
+        // failing the whole timeline. Otherwise the wifi error stands.
+        let (device, c) = if self.device_lanes {
+            match self.compile_filter(&req.filter, View::Wifi) {
+                Ok(c) => (true, c),
+                Err(wifi_err) => match self
+                    .has_flows
+                    .then(|| self.compile_filter(&req.filter, View::Flows))
+                {
+                    Some(Ok(c)) => (false, c),
+                    _ => return Err(wifi_err),
+                },
+            }
+        } else {
+            (false, self.compile_filter(&req.filter, View::Flows)?)
+        };
         let cap = &self.capture;
         let range = req.time_range.unwrap_or(TimeRange {
             start: cap.first_ts,
@@ -961,21 +980,28 @@ impl Index {
             .iter()
             .map(|(c, _)| format!("w.\"{c}\""))
             .collect();
-        let mut sql = format!(
-            "SELECT {}, fr.caplen, fr.wirelen, fr.payload_len FROM wifi w \
-             LEFT JOIN frames fr ON fr.frame_no = w.frame_no \
-             WHERE (w.src = ? OR w.dst = ? OR w.tx = ? OR w.bssid = ?)",
-            cols.join(", ")
+        // Pick the <= cap wifi frames first, then join `frames` on those
+        // frame numbers only (a join over the whole frames table per call is
+        // wasted work on large captures).
+        let mut sql = String::from(
+            "WITH w AS (SELECT * FROM wifi WHERE (src = ? OR dst = ? OR tx = ? OR bssid = ?)",
         );
         let mut params: Vec<Param> = (0..4).map(|_| Param::Str(mac.clone())).collect();
         if let Some(tr) = time_range {
             if tr.end < tr.start {
                 return Err(invalid("time_range end is before start"));
             }
-            sql.push_str(" AND w.ts >= ? AND w.ts < ?");
+            sql.push_str(" AND ts >= ? AND ts < ?");
             params.extend([Param::Int(tr.start), Param::Int(tr.end)]);
         }
-        sql.push_str(" ORDER BY w.frame_no LIMIT ?");
+        // The small side (<= cap rows) builds the hash table; DuckDB pushes
+        // its key range into the `frames` scan, which skips row groups.
+        sql.push_str(&format!(
+            " ORDER BY frame_no LIMIT ?) \
+             SELECT {}, fr.caplen, fr.wirelen, fr.payload_len FROM w \
+             LEFT JOIN frames fr ON fr.frame_no = w.frame_no ORDER BY w.frame_no",
+            cols.join(", ")
+        ));
         params.push(Param::Int(DEVICE_FRAMES_CAP as i64));
         let conn = self.conn()?;
         let mut st = conn.prepare(&sql).map_err(|e| map_query_err(&e))?;
