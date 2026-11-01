@@ -664,20 +664,84 @@ pub fn quote_ssid(s: &str) -> String {
     walleye_core::text::quote_ssid(s)
 }
 
-/// IEEE 802.3 CRC-32 (the 802.11 FCS), bitwise: used once per decoded frame.
-pub fn crc32(data: &[u8]) -> u32 {
-    let mut c = 0xffff_ffffu32;
-    for &b in data {
-        c ^= u32::from(b);
-        for _ in 0..8 {
+/// Slice-by-8 tables for the reflected CRC-32 polynomial, built at compile
+/// time.
+const CRC_TABLES: [[u32; 256]; 8] = {
+    let mut t = [[0u32; 256]; 8];
+    let mut i = 0;
+    while i < 256 {
+        let mut c = i as u32;
+        let mut k = 0;
+        while k < 8 {
             c = if c & 1 != 0 {
                 0xedb8_8320 ^ (c >> 1)
             } else {
                 c >> 1
             };
+            k += 1;
         }
+        t[0][i] = c;
+        i += 1;
+    }
+    let mut s = 1;
+    while s < 8 {
+        let mut i = 0;
+        while i < 256 {
+            let p = t[s - 1][i];
+            t[s][i] = (p >> 8) ^ t[0][(p & 0xff) as usize];
+            i += 1;
+        }
+        s += 1;
+    }
+    t
+};
+
+/// IEEE 802.3 CRC-32 (the 802.11 FCS), slice-by-8: runs on every frame that
+/// carries an FCS, so it must keep ingest well above 150 MB/s.
+pub fn crc32(data: &[u8]) -> u32 {
+    let t = &CRC_TABLES;
+    let mut c = 0xffff_ffffu32;
+    let mut chunks = data.chunks_exact(8);
+    for ch in &mut chunks {
+        let lo = c ^ u32::from_le_bytes([ch[0], ch[1], ch[2], ch[3]]);
+        let hi = u32::from_le_bytes([ch[4], ch[5], ch[6], ch[7]]);
+        c = t[7][(lo & 0xff) as usize]
+            ^ t[6][((lo >> 8) & 0xff) as usize]
+            ^ t[5][((lo >> 16) & 0xff) as usize]
+            ^ t[4][(lo >> 24) as usize]
+            ^ t[3][(hi & 0xff) as usize]
+            ^ t[2][((hi >> 8) & 0xff) as usize]
+            ^ t[1][((hi >> 16) & 0xff) as usize]
+            ^ t[0][(hi >> 24) as usize];
+    }
+    for &b in chunks.remainder() {
+        c = t[0][((c ^ u32::from(b)) & 0xff) as usize] ^ (c >> 8);
     }
     !c
+}
+
+/// Whether the record's last 4 bytes are the 802.11 FCS, so the frame ends
+/// before them. One rule for ingest and the decode tree: the radiotap FCS
+/// flag is set, the record is complete (`record_truncated` = caplen <
+/// wirelen; a snapped record never loses bytes), it is long enough, and
+/// either the CRC-32 of the frame matches or the radio flagged the FCS as
+/// bad (0x40). A flagged FCS that does not verify and is not marked bad is
+/// kept as frame bytes: the frame was snapped or the trailer is not an FCS.
+pub fn fcs_present(rt: Option<&Radiotap>, data: &[u8], record_truncated: bool) -> bool {
+    let Some(r) = rt else {
+        return false;
+    };
+    if !r.has_fcs() || record_truncated || data.len() < r.len + 4 {
+        return false;
+    }
+    let end = data.len() - 4;
+    if r.bad_fcs() {
+        return true;
+    }
+    let (Some(frame), Some(tail)) = (data.get(r.len..end), data.get(end..)) else {
+        return false;
+    };
+    tail == crc32(frame).to_le_bytes()
 }
 
 /// What a management body says, for the `wifi` row.
@@ -766,8 +830,9 @@ impl WifiFrame {
     }
 }
 
-/// Where the 802.11 frame sits in a record. `record_truncated` (caplen <
-/// wirelen) means the trailing FCS was not captured, so nothing is dropped.
+/// Where the 802.11 frame sits in a record. Whether the last 4 bytes are
+/// dropped as FCS is decided by [`fcs_present`] (shared with the decode
+/// tree); `record_truncated` (caplen < wirelen) never drops anything.
 pub fn locate(
     link_type: u32,
     data: &[u8],
@@ -779,8 +844,7 @@ pub fn locate(
         None
     };
     let start = rt.as_ref().map_or(0, |r| r.len);
-    let fcs =
-        rt.as_ref().is_some_and(Radiotap::has_fcs) && !record_truncated && data.len() >= start + 4;
+    let fcs = fcs_present(rt.as_ref(), data, record_truncated);
     let end = if fcs { data.len() - 4 } else { data.len() };
     Some((rt, Located { start, end, fcs }))
 }
@@ -1073,7 +1137,8 @@ mod tests {
         let rtlen = rec.len();
         rec.extend_from_slice(&hdr(0xc0, 0, STA, AP, AP));
         rec.extend_from_slice(&7u16.to_le_bytes());
-        rec.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+        let fcs = crc32(&rec[rtlen..]);
+        rec.extend_from_slice(&fcs.to_le_bytes());
         let w = parse_frame(127, &rec, false).expect("test input");
         assert!(w.at.fcs);
         assert_eq!(w.at.end, rec.len() - 4);
@@ -1086,6 +1151,46 @@ mod tests {
         // Snapped record: the FCS was not captured, nothing is dropped.
         let w = parse_frame(127, &rec, true).expect("test input");
         assert!(!w.at.fcs);
+
+        // Complete frame, FCS corrupted, radio did not flag it: kept as
+        // frame bytes (it may not be an FCS at all).
+        let mut bad = rec.clone();
+        let n = bad.len();
+        bad[n - 1] ^= 0xff;
+        let w = parse_frame(127, &bad, false).expect("test input");
+        assert!(!w.at.fcs);
+        assert_eq!(w.at.end, n);
+        // Same corruption with the bad-FCS flag (0x40): it is the FCS.
+        bad[8] |= RT_FLAG_BAD_FCS;
+        let w = parse_frame(127, &bad, false).expect("test input");
+        assert!(w.at.fcs);
+        assert_eq!(w.at.end, n - 4);
+        // ...but a snapped record still never loses bytes.
+        assert!(!parse_frame(127, &bad, true).expect("test input").at.fcs);
+    }
+
+    #[test]
+    fn crc32_slice_by_8_matches_bitwise() {
+        fn slow(data: &[u8]) -> u32 {
+            let mut c = 0xffff_ffffu32;
+            for &b in data {
+                c ^= u32::from(b);
+                for _ in 0..8 {
+                    c = if c & 1 != 0 {
+                        0xedb8_8320 ^ (c >> 1)
+                    } else {
+                        c >> 1
+                    };
+                }
+            }
+            !c
+        }
+        let data: Vec<u8> = (0..2000u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+            .collect();
+        for n in [0, 1, 7, 8, 9, 15, 16, 17, 100, 1999, 2000] {
+            assert_eq!(crc32(&data[..n]), slow(&data[..n]), "len {n}");
+        }
     }
 
     #[test]
