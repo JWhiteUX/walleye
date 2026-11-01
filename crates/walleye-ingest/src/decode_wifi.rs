@@ -95,29 +95,17 @@ pub fn decode(link_type: u32, b: &[u8], nodes: &mut Vec<DecodeNode>) {
             }
         }
     }
-    // Ingest drops the FCS only when the record is complete (caplen ==
-    // wirelen); we get bytes only. A trailing FCS that verifies, or that the
-    // radio flagged as bad, is the FCS of a complete frame. One that does not
-    // verify without the bad-FCS flag is most likely a snapped record: like
-    // ingest, keep those bytes as part of the frame and only point at them.
+    // Same rule as ingest (`wifi::fcs_present`): the trailing 4 bytes are the
+    // FCS only if the CRC matches or the radio flagged a bad FCS. We get the
+    // captured bytes only, so a record is treated as complete here; ingest,
+    // which knows caplen < wirelen, additionally never strips snapped
+    // records, and their trailers fail the CRC, so both agree.
     let fcs_flag = rt.as_ref().is_some_and(Radiotap::has_fcs) && blen >= start + 4;
     let bad_fcs = rt.as_ref().is_some_and(Radiotap::bad_fcs);
-    let fcs = fcs_flag && {
-        let body = b.get(start..blen - 4).unwrap_or(&[]);
-        let tail = b.get(blen - 4..).unwrap_or(&[]);
-        bad_fcs || tail == wifi::crc32(body).to_le_bytes()
-    };
+    let fcs = wifi::fcs_present(rt.as_ref(), b, false);
     let end = if fcs { blen - 4 } else { blen };
     let frame = b.get(..end).unwrap_or(b);
-    dot11(
-        link_type,
-        b,
-        frame,
-        start,
-        rt.as_ref(),
-        fcs_flag && !fcs,
-        nodes,
-    );
+    dot11(link_type, b, frame, start, rt.as_ref(), nodes);
     if fcs_flag && !fcs {
         nodes.push(warn(
             plain(
@@ -128,7 +116,7 @@ pub fn decode(link_type: u32, b: &[u8], nodes: &mut Vec<DecodeNode>) {
                 4,
                 blen,
             ),
-            "FCS flag set but the checksum does not match: frame may be truncated (decoded as payload)",
+            "FCS flag set but the checksum does not match (corrupted FCS or snapped frame): decoded as frame bytes",
         ));
     }
     if fcs {
@@ -297,7 +285,6 @@ fn dot11(
     b: &[u8],
     start: usize,
     rt: Option<&Radiotap>,
-    record_truncated: bool,
     nodes: &mut Vec<DecodeNode>,
 ) {
     let blen = b.len();
@@ -330,7 +317,7 @@ fn dot11(
         return;
     }
     let name = subtype_name(ftype, subtype);
-    let Some(w) = wifi::parse_frame(link_type, whole, record_truncated) else {
+    let Some(w) = wifi::parse_frame(link_type, whole, false) else {
         let mut n = node(format!("IEEE 802.11 {name}"), start, f.len(), blen);
         n.children.push(fc_leaf(start, ftype, subtype, blen));
         n.children

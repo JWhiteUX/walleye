@@ -474,3 +474,56 @@ fn snapped_records_agree_between_row_and_tree() {
     }
     assert!(beacons > 100);
 }
+
+/// Code review: complete frames (caplen == wirelen) whose FCS is corrupted.
+/// With the bad-FCS flag (0x40) ingest and the tree both strip the FCS; from
+/// a driver that does not set the flag, both keep the 4 bytes as frame
+/// bytes. Either way the row and the tree agree.
+#[test]
+fn corrupted_fcs_with_and_without_bad_flag_agree_between_row_and_tree() {
+    let (cap, _) = gen_wifi(Scenario::Wifi, 6, 2);
+    let mut out = cap.clone();
+    let mut p = 24;
+    let mut i = 0usize;
+    let mut flagged_rec = BTreeSet::new();
+    while p + 16 <= out.len() {
+        let n = u32::from_le_bytes(out[p + 8..p + 12].try_into().expect("test input")) as usize;
+        let rec = p + 16;
+        out[rec + n - 1] ^= 0x5a; // corrupt the FCS
+        if i % 2 == 0 {
+            out[rec + 16] |= 0x40; // radiotap Flags: bad FCS
+            flagged_rec.insert(rec as u64);
+        }
+        p += 16 + n;
+        i += 1;
+    }
+    let s = collect(&out, &IngestOptions::default());
+    let full = collect(&cap, &IngestOptions::default());
+    let by_frame: BTreeMap<u64, &WifiRow> = s.rows.wifi.iter().map(|r| (r.frame_no, r)).collect();
+    // Same rows per kind as the clean capture: only the FCS changed.
+    assert_eq!(by_kind(&s.rows.wifi), by_kind(&full.rows.wifi));
+    let (mut flagged, mut unflagged) = (0, 0);
+    for fr in &s.rows.frames {
+        assert_eq!(fr.caplen, fr.wirelen);
+        let o = fr.file_offset as usize;
+        let rec = &out[o..o + fr.caplen as usize];
+        let t = decode_frame(127, rec);
+        let last = t.last().expect("test input");
+        if flagged_rec.contains(&fr.file_offset) {
+            assert!(
+                last.label.starts_with("Frame check sequence"),
+                "{}",
+                last.label
+            );
+            assert!(last.warning.as_deref().unwrap_or("").contains("bad FCS"));
+            flagged += 1;
+        } else {
+            assert!(last.label.starts_with("Trailing 4 bytes"), "{}", last.label);
+            unflagged += 1;
+        }
+        if let Some(r) = by_frame.get(&fr.frame_no) {
+            check_row_matches_tree(r, rec, 127);
+        }
+    }
+    assert!(flagged > 100 && unflagged > 100);
+}
