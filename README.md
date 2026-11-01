@@ -80,3 +80,7 @@ To get test captures, generate them with `walleye-gen` (for example `--scenario 
 - **Treat every capture as hostile input.** Never execute, open or import anything carved from one.
 - **No network calls at runtime** unless a user turns a feature on.
 - **Never commit captures.** They live in `$WALLEYE_FIXTURES` (default `~/.walleye-fixtures`).
+
+## License
+
+[MIT](LICENSE)
