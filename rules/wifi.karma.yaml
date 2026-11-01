@@ -12,6 +12,7 @@ params:
   min_ssids: 10        # distinct probe-response-only SSIDs before anything scores
   ssids_full: 30
   echo_window_s: 5     # response this soon after the client probed for that SSID
+  max_findings: 200    # strongest devices reported; the top one notes how many more were dropped
 weights:
   ssids: 50
   echo: 25

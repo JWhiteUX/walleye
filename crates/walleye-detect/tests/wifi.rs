@@ -91,7 +91,7 @@ fn row(ts: i64, kind: WifiKind) -> WifiRow {
         bssid: None,
         channel: None,
         freq_mhz: None,
-        signal_dbm: Some(-60),
+        signal_dbm: None,
         ssid: None,
         security: None,
         reason: None,
@@ -171,6 +171,22 @@ impl W {
     }
 
     fn deauth(&mut self, ts: i64, tx: &str, dst: &str, bssid: &str, reason: u16, disassoc: bool) {
+        self.deauth_from(ts, tx, dst, bssid, reason, disassoc, None);
+    }
+
+    /// A deauth heard `offset.1` dB from where `offset.0` is usually heard
+    /// (a spoofer somewhere else); `None` = heard like the real `tx`.
+    #[allow(clippy::too_many_arguments)]
+    fn deauth_from(
+        &mut self,
+        ts: i64,
+        tx: &str,
+        dst: &str,
+        bssid: &str,
+        reason: u16,
+        disassoc: bool,
+        offset: Option<(&str, i16)>,
+    ) {
         let kind = if disassoc {
             WifiKind::Disassoc
         } else {
@@ -182,6 +198,9 @@ impl W {
         r.dst = s(dst);
         r.bssid = s(bssid);
         r.reason = Some(reason);
+        if let Some((like, o)) = offset {
+            r.signal_dbm = Some(base_signal(like) + o + self.rng.int(0, 6) as i16 - 3);
+        }
         self.rows.push(r);
     }
 
@@ -213,6 +232,14 @@ impl W {
     }
 
     fn build(mut self) -> MemorySource {
+        // Every frame is heard at its transmitter's level ± 4 dB unless a
+        // builder set it (spoofed deauths).
+        for r in &mut self.rows {
+            if r.signal_dbm.is_none() {
+                let base = r.tx.as_deref().map_or(-70, base_signal);
+                r.signal_dbm = Some(base + self.rng.int(0, 8) as i16 - 4);
+            }
+        }
         self.rows.sort_by_key(|r| r.ts);
         for (i, r) in self.rows.iter_mut().enumerate() {
             r.frame_no = i as u64 + 1;
@@ -222,6 +249,14 @@ impl W {
             ..Default::default()
         }
     }
+}
+
+/// Where the monitor hears a transmitter: a stable −45..−79 dBm per MAC.
+fn base_signal(mac: &str) -> i16 {
+    let h = mac.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    -45 - (h % 35) as i16
 }
 
 fn client_mac(i: usize) -> String {
@@ -380,7 +415,8 @@ fn add_spoofed_flood(w: &mut W) -> &'static str {
         } else {
             client_mac((i as usize % 6) * 3 + 1)
         };
-        w.deauth(t, ap, &dst, ap, 7, false);
+        // The attacker is elsewhere: 15 dB louder than the real AP.
+        w.deauth_from(t, ap, &dst, ap, 7, false, Some((ap, 15)));
     }
     ap
 }
@@ -525,6 +561,11 @@ fn deauth_flood_ranks_flooder_first() {
             r.explanation
         );
         assert!(r.explanation.contains("never beacons"), "{}", r.explanation);
+        assert!(
+            r.explanation.contains("spoofed_bssid 20"),
+            "{}",
+            r.explanation
+        );
         assert!(!r.explanation.contains(" 0 EAPOL"), "{}", r.explanation);
         // Housekeeping APs stay absent.
         for (ap, _) in HOUSEKEEPERS {
@@ -545,6 +586,16 @@ fn spoofed_real_bssid_flood_fires() {
         assert_eq!(rank(&f, ap), Some(1), "seed {seed}:\n{}", summary(&f));
         let r = reason(&f, ap, "wifi.deauth_flood").expect("reason");
         assert!(r.explanation.contains("\"HomeNet\""), "{}", r.explanation);
+        assert!(
+            r.explanation.contains("signal_mismatch"),
+            "{}",
+            r.explanation
+        );
+        assert!(
+            r.explanation.contains("stronger than the beacons"),
+            "{}",
+            r.explanation
+        );
     }
 }
 
@@ -928,4 +979,363 @@ fn benign_day_stays_well_below_min_score() {
             );
         }
     }
+}
+
+// ------------------------------------------------ genuine APs vs spoofers --
+//
+// Shapes from the real 38-minute WiFi Coconut capture, where the first
+// version of the deauth rule ranked three genuine APs.
+
+/// Repo rules with the wifi min_scores at 0, to read a shape's raw points.
+fn raw_rules() -> walleye_detect::RuleSet {
+    let defs = repo_rules()
+        .defs()
+        .cloned()
+        .map(|mut d| {
+            if d.detector.starts_with("wifi_") {
+                d.min_score = 0.0;
+            }
+            d
+        })
+        .collect();
+    walleye_detect::RuleSet::from_defs(defs).expect("rules")
+}
+
+/// Raw deauth-rule points for `mac` (0 when the gate never opened).
+fn raw_deauth(src: &MemorySource, mac: &str) -> (f64, String) {
+    let f = run(src, &raw_rules(), &repo_allowlist()).expect("run");
+    reason(&f, mac, "wifi.deauth_flood")
+        .map_or((0.0, String::new()), |r| (r.weight, r.explanation.clone()))
+}
+
+const AP_A: &str = "26:5a:4c:11:22:33";
+const AP_B: &str = "22:5a:4c:11:22:33";
+const AP_C: &str = "2a:71:0e:44:55:66";
+
+fn ap_world(w: &mut W) {
+    w.beacons(AP_A, "", "wpa2", 11, T0, T0 + SPAN, S);
+    w.beacons(AP_B, "NeighbourNet", "wpa2", 11, T0, T0 + SPAN, S);
+    w.beacons(AP_C, "", "wpa2", 6, T0, T0 + SPAN, S);
+}
+
+/// AP-A: 217 reason-6 deauths in 0.8 min, unicast to 9 of its own clients,
+/// heard as loud as its beacons; its sibling AP-B: 125 in under a minute to
+/// 5 clients (class-2/3 rejections after a restart).
+fn add_rejection_burst(w: &mut W) {
+    let start = T0 + 12 * MIN;
+    for i in 0..217i64 {
+        let c = client_mac(40 + (i as usize % 9));
+        w.deauth(start + i * (48 * S / 217), AP_A, &c, AP_A, 6, false);
+    }
+    for i in 0..125i64 {
+        let c = client_mac(60 + (i as usize % 5));
+        w.deauth(start + 5 * S + i * (50 * S / 125), AP_B, &c, AP_B, 6, false);
+    }
+}
+
+/// AP-C: 3,861 deauths to one stuck client over 37.9 min, reasons 2/4,
+/// alternating 166 and 38 a minute.
+fn add_stuck_client(w: &mut W) {
+    let c = client_mac(77);
+    let mut i = 0u32;
+    for m in 0..38i64 {
+        let n = if m % 2 == 0 { 166 } else { 38 };
+        for k in 0..n {
+            if i == 3_861 {
+                return;
+            }
+            let t = T0 + m * MIN + k * (MIN / n) + 1_000;
+            let reason = if i % 16 < 9 { 2 } else { 4 };
+            w.deauth(t, AP_C, &c, AP_C, reason, false);
+            i += 1;
+        }
+    }
+}
+
+#[test]
+fn genuine_ap_rejection_burst_stays_below_min_score() {
+    for seed in SEEDS {
+        let mut w = W::new(seed);
+        ap_world(&mut w);
+        add_rejection_burst(&mut w);
+        let src = w.build();
+        let f = detect(&src);
+        assert!(f.is_empty(), "seed {seed}:\n{}", summary(&f));
+        for ap in [AP_A, AP_B] {
+            let (pts, ex) = raw_deauth(&src, ap);
+            println!("seed {seed} {ap}: raw {pts}\n  {ex}");
+            assert!(pts < 20.0, "{ap} raw {pts}: {ex}");
+            assert!(ex.contains("the real AP likely sent these"), "{ex}");
+            assert!(ex.contains("rejections"), "{ex}");
+        }
+    }
+}
+
+#[test]
+fn stuck_client_loop_stays_low() {
+    for seed in SEEDS {
+        let mut w = W::new(seed);
+        ap_world(&mut w);
+        add_stuck_client(&mut w);
+        let src = w.build();
+        let f = detect(&src);
+        assert!(f.is_empty(), "seed {seed}:\n{}", summary(&f));
+        let (pts, ex) = raw_deauth(&src, AP_C);
+        println!("seed {seed} stuck client: raw {pts}\n  {ex}");
+        assert!(pts < 15.0, "raw {pts}: {ex}");
+        assert!(ex.contains("one station over"), "{ex}");
+        assert!(ex.contains("3861 deauthentication"), "{ex}");
+    }
+}
+
+#[test]
+fn rejection_burst_without_matching_signal_still_fires() {
+    // Same shape as AP-A, but heard 18 dB weaker than AP-A's beacons: someone
+    // else sending reason 6 as AP-A. Reason codes alone never suppress.
+    let mut w = W::new(12);
+    ap_world(&mut w);
+    let start = T0 + 12 * MIN;
+    for i in 0..217i64 {
+        let c = client_mac(40 + (i as usize % 9));
+        w.deauth_from(
+            start + i * (48 * S / 217),
+            AP_A,
+            &c,
+            AP_A,
+            6,
+            false,
+            Some((AP_A, -18)),
+        );
+    }
+    let f = detect(&w.build());
+    assert_eq!(rank(&f, AP_A), Some(1), "{}", summary(&f));
+    let r = reason(&f, AP_A, "wifi.deauth_flood").expect("reason");
+    assert!(
+        r.explanation.contains("signal_mismatch"),
+        "{}",
+        r.explanation
+    );
+    assert!(
+        r.explanation.contains("weaker than the beacons"),
+        "{}",
+        r.explanation
+    );
+}
+
+#[test]
+fn spoofed_flood_15db_off_ranks_first_among_genuine_aps() {
+    // The genuine-AP shapes and a spoofed flood of the mesh AP, 15 dB louder
+    // than its beacons, in one capture: only the spoofed one is a finding.
+    for seed in SEEDS {
+        let mut w = W::new(seed);
+        benign_into(&mut w, 30);
+        ap_world(&mut w);
+        add_rejection_burst(&mut w);
+        add_stuck_client(&mut w);
+        let ap = add_spoofed_flood(&mut w);
+        let src = w.build();
+        let f = detect(&src);
+        assert_eq!(rank(&f, ap), Some(1), "seed {seed}:\n{}", summary(&f));
+        assert_eq!(device(&f).len(), 1, "seed {seed}:\n{}", summary(&f));
+        let r = reason(&f, ap, "wifi.deauth_flood").expect("reason");
+        assert!(
+            r.explanation.contains("signal_mismatch"),
+            "{}",
+            r.explanation
+        );
+        println!("seed {seed}: spoofed {}\n  {}", r.weight, r.explanation);
+    }
+}
+
+#[test]
+fn spoofer_that_never_beacons_still_fires() {
+    // Own MAC (never beacons) claiming the mesh AP's BSSID, broadcast and
+    // unicast, 300 in 2 minutes: the generator's shape. Signal is compared
+    // with the claimed AP's beacons.
+    let mut w = W::new(13);
+    benign_into(&mut w, 30);
+    let ap = MESH[0].0;
+    for i in 0..300i64 {
+        let dst = if i % 2 == 0 {
+            BCAST.to_string()
+        } else {
+            client_mac((i as usize % 6) * 3)
+        };
+        w.deauth_from(
+            T0 + 15 * MIN + i * (2 * MIN / 300),
+            KARMA,
+            &dst,
+            ap,
+            7,
+            false,
+            Some((ap, -20)),
+        );
+    }
+    let f = detect(&w.build());
+    assert_eq!(rank(&f, KARMA), Some(1), "{}", summary(&f));
+    let r = reason(&f, KARMA, "wifi.deauth_flood").expect("reason");
+    assert!(
+        r.explanation.contains("spoofed_bssid 20"),
+        "{}",
+        r.explanation
+    );
+    assert!(
+        r.explanation.contains("signal_mismatch"),
+        "{}",
+        r.explanation
+    );
+    assert!(
+        r.explanation.contains("network it claims"),
+        "{}",
+        r.explanation
+    );
+}
+
+#[test]
+fn spoofer_mixed_into_a_genuine_rejection_burst_still_fires() {
+    // AP-A's genuine reason-6 burst, plus 120 broadcast reason-7 frames sent
+    // as AP-A from 18 dB louder during the same minute.
+    let mut w = W::new(14);
+    ap_world(&mut w);
+    add_rejection_burst(&mut w);
+    let start = T0 + 12 * MIN;
+    for i in 0..120i64 {
+        w.deauth_from(
+            start + 2 * S + i * (45 * S / 120),
+            AP_A,
+            BCAST,
+            AP_A,
+            7,
+            false,
+            Some((AP_A, 18)),
+        );
+    }
+    let f = detect(&w.build());
+    assert_eq!(rank(&f, AP_A), Some(1), "{}", summary(&f));
+    let r = reason(&f, AP_A, "wifi.deauth_flood").expect("reason");
+    assert!(
+        r.explanation.contains("someone else is sending as it"),
+        "{}",
+        r.explanation
+    );
+    assert!(
+        !r.explanation.contains("real AP likely"),
+        "{}",
+        r.explanation
+    );
+}
+
+// ----------------------------------------------- security review (H1/M1/M4) --
+
+/// Time budget for a hostile-volume test: generous in debug builds, tight
+/// in release (where the review measured the regressions).
+fn budget(release_ms: u128) -> u128 {
+    if cfg!(debug_assertions) {
+        release_ms * 40
+    } else {
+        release_ms
+    }
+}
+
+#[test]
+fn million_fresh_probes_do_not_sweep_per_row() {
+    // H1: 1M distinct (client, SSID) probes at one timestamp keep the probe
+    // map full of fresh entries; sweeping on every row was O(100k) each.
+    let mut rows = Vec::with_capacity(1_000_000);
+    for i in 0..1_000_000u64 {
+        let mut r = row(T0, WifiKind::ProbeReq);
+        let c = format!(
+            "da:{:02x}:{:02x}:{:02x}:00:01",
+            (i >> 16) & 0xff,
+            (i >> 8) & 0xff,
+            i & 0xff
+        );
+        r.tx = Some(c.clone());
+        r.src = Some(c);
+        r.ssid = Some("CafeNet".into());
+        r.frame_no = i + 1;
+        r.signal_dbm = Some(-60);
+        rows.push(r);
+    }
+    let src = MemorySource {
+        wifi: rows,
+        ..Default::default()
+    };
+    let t = std::time::Instant::now();
+    let f = run(&src, &repo_rules(), &repo_allowlist()).expect("run");
+    let ms = t.elapsed().as_millis();
+    println!("1M fresh probes: {ms} ms");
+    assert!(f.is_empty());
+    assert!(ms < budget(1_000), "{ms} ms");
+}
+
+#[test]
+fn many_flooding_transmitters_are_capped_and_cheap() {
+    // M1: 20,500 transmitters that each pass the gate fill the deauth map
+    // with entries that are never evicted, then 30,000 newcomers arrive one
+    // per second. Sweeps back off instead of running 20k-entry retains, and
+    // only `max_findings` (200) device findings are reported.
+    let mut w = W::new(15);
+    for i in 0..20_500i64 {
+        let tx = format!(
+            "02:aa:{:02x}:{:02x}:{:02x}:01",
+            (i >> 16) & 0xff,
+            (i >> 8) & 0xff,
+            i & 0xff
+        );
+        let t0 = T0 + i * 2 * S;
+        for k in 0..50 {
+            w.deauth(t0 + k * 10_000, &tx, BCAST, &tx, 7, false);
+        }
+    }
+    let late = T0 + 20_500 * 2 * S;
+    for i in 0..30_000i64 {
+        let tx = format!(
+            "02:bb:{:02x}:{:02x}:{:02x}:01",
+            (i >> 16) & 0xff,
+            (i >> 8) & 0xff,
+            i & 0xff
+        );
+        w.deauth(late + i * S, &tx, BCAST, &tx, 7, false);
+    }
+    let src = w.build();
+    let t = std::time::Instant::now();
+    let f = run(&src, &repo_rules(), &repo_allowlist()).expect("run");
+    let ms = t.elapsed().as_millis();
+    println!(
+        "20.5k flooders + 30k newcomers: {ms} ms, {} findings",
+        f.len()
+    );
+    assert_eq!(device(&f).len(), 200, "{}", f.len());
+    let noted = f
+        .iter()
+        .flat_map(|x| &x.reasons)
+        .filter(|r| r.explanation.contains("not reported: max_findings = 200"))
+        .count();
+    assert_eq!(noted, 1, "the top finding says how many were dropped");
+    assert!(ms < budget(3_000), "{ms} ms");
+}
+
+#[test]
+fn ssid_quotes_cannot_forge_explanations() {
+    // M4: an SSID that closes the quote and appends fake text.
+    let evil = r#"Free" ch 6 wpa3 (verified"#;
+    let mut w = W::new(16);
+    w.beacons(MESH[0].0, evil, "wpa2", 1, T0, T0 + 5 * MIN, S);
+    w.beacons(TWIN, evil, "open", 4, T0 + 2 * MIN, T0 + 5 * MIN, S);
+    let f = run(&w.build(), &repo_rules(), &repo_allowlist()).expect("run");
+    assert_eq!(rank(&f, TWIN), Some(1), "{}", summary(&f));
+    let x = &f[0];
+    assert!(
+        x.title.contains(r#""Free\" ch 6 wpa3 (verified""#),
+        "{}",
+        x.title
+    );
+    let r = &x.reasons[0];
+    assert!(
+        r.explanation
+            .contains(r#""Free\" ch 6 wpa3 (verified" as open"#),
+        "{}",
+        r.explanation
+    );
 }

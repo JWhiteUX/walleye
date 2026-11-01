@@ -11,6 +11,7 @@ params:
   min_frames: 3       # beacons/probe responses per BSSID (one corrupt frame never fires)
   later_min_s: 60     # the weaker BSSID first seen this long after the original
   ignore_ssids: [default, linksys, netgear, dlink, tp-link, wireless, setup, android, iphone]
+  max_findings: 200    # strongest devices reported; the top one notes how many more were dropped
 weights:
   security_mismatch: 40
   randomized: 20

@@ -1056,7 +1056,9 @@ fn answer_probes(g: &mut Gen, w: &mut World) {
 }
 
 /// Deauth flood claiming Lighthouse's BSSID: broadcast and unicast to each
-/// of its clients, every 250 ms for 100 s, reason 7.
+/// of its clients, every 250 ms for 100 s, reason 7, sent from the
+/// attacker's own locally administered MAC, heard 12-25 dB away from
+/// Lighthouse's beacons.
 fn deauth_flood(g: &mut Gen, w: &mut World) {
     let ap = w.aps[w.lighthouse].clone();
     let victims: Vec<Client> = w
@@ -1065,9 +1067,20 @@ fn deauth_flood(g: &mut Gen, w: &mut World) {
         .filter(|c| c.home == w.lighthouse)
         .cloned()
         .collect();
+    // The attacker is somewhere else than the AP it impersonates, so the
+    // monitor hears it 12-25 dB louder or weaker than the AP's beacons
+    // (drifting a little as it moves): what a WIDS signal check keys on.
+    let magnitude = 12 + g.rng.range(0, 13) as i16;
+    let offset = if g.rng.below(2) == 0 {
+        magnitude
+    } else {
+        -magnitude
+    };
     let mut t = w.flood_start;
     let mut i = 0usize;
     while t < w.flood_end && t < g.end {
+        let drift = g.rng.range(0, 4) as i16 - 2;
+        let signal = (i16::from(ap.signal) + offset + drift).clamp(-92, -20) as i8;
         let (a1, ack_sig) = if i % 2 == 0 || victims.is_empty() {
             (BC, 0)
         } else {
@@ -1077,7 +1090,7 @@ fn deauth_flood(g: &mut Gen, w: &mut World) {
         g.mgmt(
             t,
             ap.chan,
-            -38,
+            signal,
             ack_sig,
             12,
             false,
@@ -1190,7 +1203,7 @@ pub fn generate<W: Write>(opts: &Options, start: i64, out: W) -> io::Result<Summ
     }
     let notes = if w.attack {
         format!(
-            "802.11 radiotap, channels 1/6/11, {minutes} min: 6 APs (3-node {MESH_SSID} mesh wpa2/wpa3, Harbor-5 wpa3, {TWIN_SSID} wpa2, {GUEST_SSID} open with clear-text DNS/HTTP), 25 clients (odd ones randomized), normal deauth/disassoc reason 3/8. Attacks: deauth flood from a randomized MAC claiming {TWIN_SSID}'s BSSID (reason 7, broadcast + unicast, 4/s for 100 s, then victims re-handshake); open evil twin of {TWIN_SSID} on channel 1 from a randomized BSSID (one kicked client joins it and browses); karma AP on channel 6 answering directed probes. Emitted: {}.",
+            "802.11 radiotap, channels 1/6/11, {minutes} min: 6 APs (3-node {MESH_SSID} mesh wpa2/wpa3, Harbor-5 wpa3, {TWIN_SSID} wpa2, {GUEST_SSID} open with clear-text DNS/HTTP), 25 clients (odd ones randomized), normal deauth/disassoc reason 3/8. Attacks: deauth flood from a randomized MAC claiming {TWIN_SSID}'s BSSID (reason 7, broadcast + unicast, 4/s for 100 s, heard 12-25 dB away from {TWIN_SSID}'s beacons, then victims re-handshake); open evil twin of {TWIN_SSID} on channel 1 from a randomized BSSID (one kicked client joins it and browses); karma AP on channel 6 answering directed probes. Emitted: {}.",
             evidence.join("; ")
         )
     } else {
