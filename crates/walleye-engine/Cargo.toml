@@ -1,0 +1,24 @@
+[package]
+name = "walleye-engine"
+description = "Real Backend: wires ingest → index → detect → case behind walleye_core::Backend"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+walleye-core.workspace = true
+walleye-ingest.workspace = true
+walleye-index.workspace = true
+walleye-detect.workspace = true
+walleye-case.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+walleye-gen = { path = "../../tools/walleye-gen" }
+
+[lints]
+workspace = true

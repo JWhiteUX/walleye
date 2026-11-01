@@ -1,0 +1,13 @@
+id: beacon.periodic
+title: Periodic outbouions
+detector: beaconing
+enabled: true
+attack_technique: T1071
+params:
+  min_conut: 8
+  max_jitter: 0.2
+  min_duration_s: 600
+  ports: [80, 88888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888443]
+weights:
+  regular_score: 30
+explanation: contacted {dst} {count} times, evmes, evs"

@@ -1,0 +1,101 @@
+# Known-good destinations. Matching IOCs are kept but flagged `allowlisted`,
+# and detectors down-weight reasons whose destination matches.
+# Schema: crates/walleye-core/src/allowlist.rs. Owner: Agent F (defaults may grow).
+#
+# Policy (keep it conservative):
+# * `suffix` matches the name itself and its subdomains on a label boundary
+#   (`windowsupdate.com` matches `a.windowsupdate.com`, never
+#   `evilwindowsupdate.com`).
+# * Only hosts run by the vendor for OS/software updates, OS telemetry,
+#   time and connectivity checks. No general cloud or hosting namespaces where anyone
+#   can get a subdomain (azurewebsites.net, herokuapp.com, appspot.com,
+#   blob.core.windows.net, ...): attackers host C2 there.
+# * CDN edge names below are CNAME targets of the CDN itself. Multi-tenant
+#   CDNs can still carry attacker content (domain fronting), which is why
+#   allowlisted IOCs are flagged, never dropped. cloudfront.net and fastly.net
+#   are deliberately absent: anyone can create a distribution there (*.cloudfront.net
+#   names are customer-chosen), and both are documented C2 front ends.
+# * CIDRs only where the vendor owns the whole block or for single,
+#   well-known resolver addresses. No cloud-provider ranges.
+# * JA4 is empty on purpose: common client fingerprints are shared by malware
+#   built on the same TLS stacks.
+version: 1
+domains:
+  # Microsoft / Windows Update
+  - { suffix: windowsupdate.com, reason: "Microsoft Update" }
+  - { suffix: update.microsoft.com, reason: "Microsoft Update" }
+  - { suffix: windowsupdate.microsoft.com, reason: "Microsoft Update" }
+  - { suffix: delivery.mp.microsoft.com, reason: "Microsoft Update delivery" }
+  - { suffix: wustat.windows.com, reason: "Microsoft Update" }
+  - { suffix: ntservicepack.microsoft.com, reason: "Microsoft Update" }
+  - { suffix: download.microsoft.com, reason: "Microsoft downloads" }
+  - { suffix: officecdn.microsoft.com, reason: "Microsoft Office updates" }
+  - { suffix: msftconnecttest.com, reason: "Windows connectivity check" }
+  - { suffix: msftncsi.com, reason: "Windows connectivity check" }
+  - { suffix: time.windows.com, reason: "Windows time service" }
+  - { suffix: events.data.microsoft.com, reason: "Windows telemetry (Connected User Experiences)" }
+  - { suffix: vortex.data.microsoft.com, reason: "Windows telemetry" }
+  - { suffix: settings-win.data.microsoft.com, reason: "Windows telemetry settings" }
+  - { suffix: watson.telemetry.microsoft.com, reason: "Windows Error Reporting" }
+  - { suffix: watson.microsoft.com, reason: "Windows Error Reporting" }
+  # Apple software update
+  - { suffix: swcdn.apple.com, reason: "Apple software update" }
+  - { suffix: swscan.apple.com, reason: "Apple software update" }
+  - { suffix: swdist.apple.com, reason: "Apple software update" }
+  - { suffix: mesu.apple.com, reason: "Apple software update" }
+  - { suffix: gdmf.apple.com, reason: "Apple software update" }
+  - { suffix: updates.cdn-apple.com, reason: "Apple software update" }
+  - { suffix: updates-http.cdn-apple.com, reason: "Apple software update" }
+  - { suffix: captive.apple.com, reason: "Apple connectivity check" }
+  - { suffix: time.apple.com, reason: "Apple time service" }
+  - { suffix: ocsp.apple.com, reason: "Apple certificate status" }
+  - { suffix: ocsp2.apple.com, reason: "Apple certificate status" }
+  - { suffix: valid.apple.com, reason: "Apple certificate revocation list" }
+  - { suffix: time-ios.apple.com, reason: "Apple time service" }
+  - { suffix: push.apple.com, reason: "Apple Push Notification service (periodic keepalive)" }
+  - { suffix: xp.apple.com, reason: "Apple analytics/telemetry" }
+  - { suffix: gs.apple.com, reason: "Apple software update signing" }
+  - { suffix: configuration.apple.com, reason: "Apple OS configuration" }
+  # Google / Chrome update
+  - { suffix: update.googleapis.com, reason: "Google software update" }
+  - { suffix: dl.google.com, reason: "Google software update" }
+  - { suffix: tools.google.com, reason: "Google software update" }
+  - { suffix: clients2.google.com, reason: "Chrome update" }
+  - { suffix: gvt1.com, reason: "Google update CDN" }
+  - { suffix: connectivitycheck.gstatic.com, reason: "Android/Chrome connectivity check" }
+  # Mozilla
+  - { suffix: aus5.mozilla.org, reason: "Firefox update" }
+  # Linux distributions
+  - { suffix: archive.ubuntu.com, reason: "Ubuntu archive mirror" }
+  - { suffix: security.ubuntu.com, reason: "Ubuntu security updates" }
+  - { suffix: ports.ubuntu.com, reason: "Ubuntu ports mirror" }
+  - { suffix: changelogs.ubuntu.com, reason: "Ubuntu release check" }
+  - { suffix: connectivity-check.ubuntu.com, reason: "Ubuntu connectivity check" }
+  - { suffix: ntp.ubuntu.com, reason: "Ubuntu time service" }
+  - { suffix: api.snapcraft.io, reason: "Ubuntu Snap store" }
+  - { suffix: motd.ubuntu.com, reason: "Ubuntu message-of-the-day check" }
+  - { suffix: esm.ubuntu.com, reason: "Ubuntu Pro/ESM updates" }
+  - { suffix: daisy.ubuntu.com, reason: "Ubuntu crash reporting" }
+  - { suffix: metrics.ubuntu.com, reason: "Ubuntu telemetry" }
+  - { suffix: popcon.ubuntu.com, reason: "Ubuntu package popularity telemetry" }
+  - { suffix: livepatch.canonical.com, reason: "Ubuntu Livepatch" }
+  - { suffix: deb.debian.org, reason: "Debian mirror" }
+  - { suffix: security.debian.org, reason: "Debian security updates" }
+  - { suffix: ftp.debian.org, reason: "Debian mirror" }
+  - { suffix: mirrors.fedoraproject.org, reason: "Fedora mirror list" }
+  - { suffix: dl.fedoraproject.org, reason: "Fedora mirror" }
+  # Time
+  - { suffix: pool.ntp.org, reason: "NTP pool" }
+  # CDN edge names (see policy above)
+  - { suffix: akamaiedge.net, reason: "Akamai CDN" }
+cidrs:
+  - { cidr: 13.107.4.50/32, reason: "Microsoft" }
+  - { cidr: 17.0.0.0/8, reason: "Apple" }
+  - { cidr: 8.8.8.8/32, reason: "Google Public DNS" }
+  - { cidr: 8.8.4.4/32, reason: "Google Public DNS" }
+  - { cidr: 1.1.1.1/32, reason: "Cloudflare DNS" }
+  - { cidr: 1.0.0.1/32, reason: "Cloudflare DNS" }
+  - { cidr: 9.9.9.9/32, reason: "Quad9 DNS" }
+  - { cidr: "2001:4860:4860::8888/128", reason: "Google Public DNS" }
+  - { cidr: "2606:4700:4700::1111/128", reason: "Cloudflare DNS" }
+ja4: []

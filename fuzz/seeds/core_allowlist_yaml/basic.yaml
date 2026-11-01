@@ -1,0 +1,8 @@
+version: 1
+domains:
+  - { suffix: windowsupdate.com, reason: MS }
+cidrs:
+  - { cidr: 17.0.0.0/8, reason: Apple }
+  - { cidr: '2606:4700::/32', reason: CF }
+ja4:
+  - { value: t13d1516h2_8daaf6152771_02713d6af862, reason: Chrome }

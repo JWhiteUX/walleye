@@ -1,0 +1,9 @@
+{
+  "scenario": "external",
+  "source": "https://www.malware-traffic-analysis.net/2025/12/29/index.html (2025-12-29-ClickFix-page-sends-NetSupportRAT.pcap.zip)",
+  "sha256": "7b18868c20aff09e15c6bc68806a304b45af6f33d4776834238388a0666c660f",
+  "c2_hosts": ["10.12.29.101"],
+  "bad_destinations": ["185.39.19.96", "80.253.249.145", "ivanstonework.com", "extracareliving.com", "relativegoingplanning.net"],
+  "benign": false,
+  "notes": "ClickFix fake CAPTCHA -> payload from 80.253.249.145 -> NetSupport RAT. C2 185.39.19.96:443 (HTTP POST /fakeurl.htm). 104.21.96.46 is a Cloudflare front, not C2. Infected host from tcpdump of C2 packet headers."
+}

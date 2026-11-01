@@ -1,0 +1,5 @@
+GET /index.html?q=1 HTTP/1.1
+Host: www.example.com
+User-Agent: walleye-seed/1.0
+Accept: */*
+

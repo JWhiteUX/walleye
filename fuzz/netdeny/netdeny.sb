@@ -1,0 +1,25 @@
+;; Walleye network-deny profile for macOS `sandbox-exec` (verified on macOS 26.6.2).
+;;
+;; Everything is allowed except network use. Any attempt is fatal: the process
+;; receives SIGKILL (exit 137), so a silently-ignored failure still fails the
+;; test. This makes the check deterministic without reading the unified log.
+;;
+;; Covers:
+;;  * IP sockets in any direction, loopback included (connect, sendto, bind);
+;;  * name resolution. On macOS getaddrinfo() does not open IP sockets
+;;    itself: it asks mDNSResponder over a unix socket / mach service. Without
+;;    the two rules at the bottom a DNS lookup passes this profile unnoticed
+;;    (checked: an IP-only profile let getaddrinfo("localhost") succeed).
+;;
+;; Does NOT cover WKWebView fetches: WebKit's networking runs in an XPC service
+;; that launchd starts, outside this sandbox. Use the Playwright request audit
+;; (no-network.spec.ts) for the webview.
+(version 1)
+(allow default)
+(deny network-outbound (remote ip) (with send-signal SIGKILL))
+(deny network-inbound (local ip) (with send-signal SIGKILL))
+(deny network-bind (local ip) (with send-signal SIGKILL))
+(deny network-outbound
+      (remote unix-socket (path-literal "/private/var/run/mDNSResponder"))
+      (with send-signal SIGKILL))
+(deny mach-lookup (global-name "com.apple.dnssd.service") (with send-signal SIGKILL))

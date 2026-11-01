@@ -1,0 +1,72 @@
+/* Design tokens shared by every panel. Dark-first analyst UI; light via
+   prefers-color-scheme. All text/background pairs meet WCAG 2.1 AA (4.5:1). */
+:root {
+  color-scheme: dark light;
+  --wl-font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --wl-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --wl-font-size: 13px;
+  --wl-space-1: 4px;
+  --wl-space-2: 8px;
+  --wl-space-3: 12px;
+  --wl-space-4: 16px;
+  --wl-radius: 4px;
+
+  --wl-bg: #0f1216;
+  --wl-surface: #171b21;
+  --wl-surface-2: #1f252d;
+  --wl-border: #313945;
+  --wl-text: #e6e9ee;
+  --wl-text-muted: #a3acb9;
+  --wl-accent: #6cb6ff;
+  --wl-focus: #ffd166;
+  --wl-selection: #23415f;
+  --wl-danger: #ff7b72;
+
+  --wl-kind-dns: #79c0ff;
+  --wl-kind-tls: #7ee787;
+  --wl-kind-http: #d2a8ff;
+  --wl-kind-bulk: #ffa657;
+  --wl-kind-other: #a3acb9;
+
+  --wl-score-high: #ff7b72;
+  --wl-score-medium: #e3b341;
+  --wl-score-low: #8b949e;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --wl-bg: #f6f8fa;
+    --wl-surface: #ffffff;
+    --wl-surface-2: #eef1f4;
+    --wl-border: #c9d1d9;
+    --wl-text: #1f2328;
+    --wl-text-muted: #57606a;
+    --wl-accent: #0969da;
+    --wl-focus: #9a6700;
+    --wl-selection: #ddf4ff;
+    --wl-danger: #cf222e;
+    --wl-kind-dns: #0969da;
+    --wl-kind-tls: #1a7f37;
+    --wl-kind-http: #8250df;
+    --wl-kind-bulk: #bc4c00;
+    --wl-kind-other: #57606a;
+    --wl-score-high: #cf222e;
+    --wl-score-medium: #9a6700;
+    --wl-score-low: #57606a;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--wl-bg);
+  color: var(--wl-text);
+  font-family: var(--wl-font-ui);
+  font-size: var(--wl-font-size);
+}
+:focus-visible { outline: 2px solid var(--wl-focus); outline-offset: 1px; }
+.wl-mono { font-family: var(--wl-font-mono); }
+.wl-visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}

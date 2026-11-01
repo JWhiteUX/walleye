@@ -1,0 +1,19 @@
+# High-entropy leftmost labels under one registered domain: encoded data or
+# machine-generated names. Detector docs: crates/walleye-detect/src/dns.rs.
+id: dns.entropy
+title: "High-entropy DNS names under {domain}"
+detector: dns_entropy
+attack_technique: T1071.004
+params:
+  min_unique: 8         # distinct prefixes under the domain
+  min_prefix_len: 6     # mean prefix length; short names have little entropy to measure
+  entropy_low: 3.0      # bits/char: 0 points at or below
+  entropy_high: 4.2     # bits/char: full points at or above (base32 ≈ 4.6+, hex ≈ 3.8)
+  allowlist_factor: 0.25
+  prevalence_min_hosts: 3 # domain queried by >= max(3, 30% of internal hosts): shared service, score reduced
+  prevalence_ratio: 0.3
+  prevalence_factor: 0.3
+weights:
+  entropy: 35
+min_score: 15
+explanation: "{unique} distinct names under {domain} from {src} average {entropy} bits/char entropy over {prefix_len}-char prefixes, e.g. {example} [{breakdown}]"

@@ -1,0 +1,27 @@
+[package]
+name = "walleye-ingest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Walleye capture reader, flow assembly and protocol parsers (DNS, HTTP/1.x, TLS)"
+
+[dependencies]
+walleye-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+pcap-parser = "0.17"
+etherparse = "0.19"
+sha2 = "0.10"
+
+[dev-dependencies]
+criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "throughput"
+harness = false
+
+[lints]
+workspace = true

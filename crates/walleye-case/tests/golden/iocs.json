@@ -1,0 +1,249 @@
+{
+  "format": "walleye-iocs",
+  "version": 1,
+  "generator": "walleye 0.1.0",
+  "defanged": true,
+  "capture": {
+    "capture_id": "a3f1c9e07b5d2e64",
+    "sha256": "a3f1c9e07b5d2e6448c2b1f0e9d8c7b6a5948372615049382716f5e4d3c2b1a0",
+    "path": "/cases/office-beacon.pcap",
+    "size_bytes": 238862,
+    "first_ts": 1773306026906498,
+    "last_ts": 1773309526976582,
+    "frame_count": 2449
+  },
+  "iocs": [
+    {
+      "ioc_id": "dd322c6b207aa616",
+      "type": "ip",
+      "indicator": "13[.]107[.]4[.]50",
+      "first_seen": "2026-03-12T09:00:31.906498Z",
+      "first_seen_us": 1773306031906498,
+      "allowlisted": true,
+      "allowlist_reason": "Microsoft",
+      "source_finding_id": "f1b2c3d4e5f60004",
+      "evidence": {
+        "flow_ids": [
+          20
+        ],
+        "frame_nos": [
+          5
+        ],
+        "truncated": false,
+        "total": 1
+      }
+    },
+    {
+      "ioc_id": "232d07b20278653f",
+      "type": "domain",
+      "indicator": "fe2[.]update[.]microsoft[.]com",
+      "first_seen": "2026-03-12T09:00:31.906498Z",
+      "first_seen_us": 1773306031906498,
+      "allowlisted": true,
+      "allowlist_reason": "Microsoft Update",
+      "source_finding_id": "f1b2c3d4e5f60004",
+      "evidence": {
+        "flow_ids": [
+          20
+        ],
+        "frame_nos": [
+          7
+        ],
+        "truncated": false,
+        "total": 1
+      }
+    },
+    {
+      "ioc_id": "6f6b95e308ff5925",
+      "type": "ja4",
+      "indicator": "t13d1516h2_8daaf6152771_02713d6af862",
+      "first_seen": "2026-03-12T09:00:31.906498Z",
+      "first_seen_us": 1773306031906498,
+      "allowlisted": false,
+      "allowlist_reason": null,
+      "source_finding_id": "f1b2c3d4e5f60004",
+      "evidence": {
+        "flow_ids": [
+          20
+        ],
+        "frame_nos": [
+          7
+        ],
+        "truncated": false,
+        "total": 1
+      }
+    },
+    {
+      "ioc_id": "ceba45320033348d",
+      "type": "cert_serial",
+      "indicator": "33000001",
+      "first_seen": "2026-03-12T09:00:31.906498Z",
+      "first_seen_us": 1773306031906498,
+      "allowlisted": true,
+      "allowlist_reason": "Microsoft Update",
+      "source_finding_id": "f1b2c3d4e5f60004",
+      "evidence": {
+        "flow_ids": [
+          20
+        ],
+        "frame_nos": [
+          7
+        ],
+        "truncated": false,
+        "total": 1
+      }
+    },
+    {
+      "ioc_id": "9c10bd30bd51ab23",
+      "type": "domain",
+      "indicator": "cdn-update[.]top",
+      "first_seen": "2026-03-12T09:00:36.906498Z",
+      "first_seen_us": 1773306036906498,
+      "allowlisted": false,
+      "allowlist_reason": null,
+      "source_finding_id": "f1b2c3d4e5f60001",
+      "evidence": {
+        "flow_ids": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "frame_nos": [
+          10,
+          11,
+          23,
+          103,
+          113,
+          123
+        ],
+        "truncated": false,
+        "total": 6
+      }
+    },
+    {
+      "ioc_id": "36ef5d9ad4a60631",
+      "type": "ip",
+      "indicator": "185[.]199[.]110[.]77",
+      "first_seen": "2026-03-12T09:00:37.906498Z",
+      "first_seen_us": 1773306037906498,
+      "allowlisted": false,
+      "allowlist_reason": null,
+      "source_finding_id": "f1b2c3d4e5f60001",
+      "evidence": {
+        "flow_ids": [
+          2,
+          3,
+          4,
+          5
+        ],
+        "frame_nos": [
+          20,
+          100,
+          110,
+          120
+        ],
+        "truncated": false,
+        "total": 4
+      }
+    },
+    {
+      "ioc_id": "0f4ab14622b8b5cb",
+      "type": "url",
+      "indicator": "hxxp://cdn-update[.]top/gate[.]php?id=7f3a",
+      "first_seen": "2026-03-12T09:00:37.906498Z",
+      "first_seen_us": 1773306037906498,
+      "allowlisted": false,
+      "allowlist_reason": null,
+      "source_finding_id": "f1b2c3d4e5f60001",
+      "evidence": {
+        "flow_ids": [
+          2
+        ],
+        "frame_nos": [
+          23
+        ],
+        "truncated": false,
+        "total": 1
+      }
+    },
+    {
+      "ioc_id": "c160df35a599b13e",
+      "type": "ja4",
+      "indicator": "t12d190800_d83cc789557e_7af1ed941c26",
+      "first_seen": "2026-03-12T09:01:26.906498Z",
+      "first_seen_us": 1773306086906498,
+      "allowlisted": false,
+      "allowlist_reason": null,
+      "source_finding_id": "f1b2c3d4e5f60001",
+      "evidence": {
+        "flow_ids": [
+          3,
+          4,
+          5
+        ],
+        "frame_nos": [
+          103,
+          113,
+          123
+        ],
+        "truncated": false,
+        "total": 3
+      }
+    },
+    {
+      "ioc_id": "10e2eb381087b82e",
+      "type": "cert_serial",
+      "indicator": "00d1e2f3a4b5c6d7",
+      "first_seen": "2026-03-12T09:01:26.906498Z",
+      "first_seen_us": 1773306086906498,
+      "allowlisted": false,
+      "allowlist_reason": null,
+      "source_finding_id": "f1b2c3d4e5f60001",
+      "evidence": {
+        "flow_ids": [
+          3,
+          4,
+          5
+        ],
+        "frame_nos": [
+          103,
+          113,
+          123
+        ],
+        "truncated": false,
+        "total": 3
+      }
+    },
+    {
+      "ioc_id": "ad57b7d40a85d78e",
+      "type": "domain",
+      "indicator": "exfil-dns[.]xyz",
+      "first_seen": "2026-03-12T09:03:46.906498Z",
+      "first_seen_us": 1773306226906498,
+      "allowlisted": false,
+      "allowlist_reason": null,
+      "source_finding_id": "f1b2c3d4e5f60002",
+      "evidence": {
+        "flow_ids": [
+          10
+        ],
+        "frame_nos": [
+          300,
+          301,
+          302,
+          303,
+          304,
+          305,
+          306,
+          307,
+          308,
+          309
+        ],
+        "truncated": false,
+        "total": 10
+      }
+    }
+  ]
+}

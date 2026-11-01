@@ -1,0 +1,301 @@
+{
+  "capture": {
+    "capture_id": "abcdef0123456789",
+    "first_ts": 1700000000000000,
+    "format": "pcap",
+    "frame_count": 15,
+    "last_ts": 1700000000014000,
+    "link_type": 1,
+    "path": "<memory>",
+    "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    "size_bytes": 4763
+  },
+  "rows": {
+    "dns": [],
+    "files": [
+      {
+        "direction": "down",
+        "filename": "report.pdf",
+        "flow_id": 1,
+        "frame_no": 5,
+        "mime_type": "application/pdf",
+        "size_bytes": 3000,
+        "source": "http",
+        "ts": 1700000000004000
+      },
+      {
+        "direction": "up",
+        "filename": null,
+        "flow_id": 1,
+        "frame_no": 8,
+        "mime_type": "application/x-www-form-urlencoded",
+        "size_bytes": 11,
+        "source": "http",
+        "ts": 1700000000007000
+      },
+      {
+        "direction": "down",
+        "filename": "upload",
+        "flow_id": 1,
+        "frame_no": 10,
+        "mime_type": "text/plain",
+        "size_bytes": 5,
+        "source": "http",
+        "ts": 1700000000009000
+      },
+      {
+        "direction": "down",
+        "filename": "payload.bin",
+        "flow_id": 1,
+        "frame_no": 12,
+        "mime_type": "application/octet-stream",
+        "size_bytes": 4,
+        "source": "http",
+        "ts": 1700000000011000
+      }
+    ],
+    "flows": [
+      {
+        "app_proto": "http",
+        "bytes_down": 3314,
+        "bytes_up": 375,
+        "dst_ip": "93.184.216.34",
+        "dst_port": 80,
+        "first_frame": 1,
+        "flow_id": 1,
+        "last_frame": 15,
+        "pkts_down": 7,
+        "pkts_up": 8,
+        "proto": 6,
+        "src_ip": "10.0.0.5",
+        "src_port": 50000,
+        "ts_end": 1700000000014000,
+        "ts_start": 1700000000000000
+      }
+    ],
+    "frames": [
+      {
+        "caplen": 54,
+        "direction": "up",
+        "file_offset": 40,
+        "flow_id": 1,
+        "frame_no": 1,
+        "link_type": 1,
+        "payload_len": 0,
+        "tcp_flags": 2,
+        "ts": 1700000000000000,
+        "wirelen": 54
+      },
+      {
+        "caplen": 54,
+        "direction": "down",
+        "file_offset": 110,
+        "flow_id": 1,
+        "frame_no": 2,
+        "link_type": 1,
+        "payload_len": 0,
+        "tcp_flags": 18,
+        "ts": 1700000000001000,
+        "wirelen": 54
+      },
+      {
+        "caplen": 54,
+        "direction": "up",
+        "file_offset": 180,
+        "flow_id": 1,
+        "frame_no": 3,
+        "link_type": 1,
+        "payload_len": 0,
+        "tcp_flags": 16,
+        "ts": 1700000000002000,
+        "wirelen": 54
+      },
+      {
+        "caplen": 137,
+        "direction": "up",
+        "file_offset": 250,
+        "flow_id": 1,
+        "frame_no": 4,
+        "link_type": 1,
+        "payload_len": 83,
+        "tcp_flags": 24,
+        "ts": 1700000000003000,
+        "wirelen": 137
+      },
+      {
+        "caplen": 1126,
+        "direction": "down",
+        "file_offset": 403,
+        "flow_id": 1,
+        "frame_no": 5,
+        "link_type": 1,
+        "payload_len": 1072,
+        "tcp_flags": 24,
+        "ts": 1700000000004000,
+        "wirelen": 1126
+      },
+      {
+        "caplen": 1054,
+        "direction": "down",
+        "file_offset": 1545,
+        "flow_id": 1,
+        "frame_no": 6,
+        "link_type": 1,
+        "payload_len": 1000,
+        "tcp_flags": 24,
+        "ts": 1700000000005000,
+        "wirelen": 1054
+      },
+      {
+        "caplen": 1054,
+        "direction": "down",
+        "file_offset": 2615,
+        "flow_id": 1,
+        "frame_no": 7,
+        "link_type": 1,
+        "payload_len": 1000,
+        "tcp_flags": 24,
+        "ts": 1700000000006000,
+        "wirelen": 1054
+      },
+      {
+        "caplen": 178,
+        "direction": "up",
+        "file_offset": 3685,
+        "flow_id": 1,
+        "frame_no": 8,
+        "link_type": 1,
+        "payload_len": 124,
+        "tcp_flags": 24,
+        "ts": 1700000000007000,
+        "wirelen": 178
+      },
+      {
+        "caplen": 178,
+        "direction": "up",
+        "file_offset": 3879,
+        "flow_id": 1,
+        "frame_no": 9,
+        "link_type": 1,
+        "payload_len": 124,
+        "tcp_flags": 24,
+        "ts": 1700000000008000,
+        "wirelen": 178
+      },
+      {
+        "caplen": 157,
+        "direction": "down",
+        "file_offset": 4073,
+        "flow_id": 1,
+        "frame_no": 10,
+        "link_type": 1,
+        "payload_len": 103,
+        "tcp_flags": 24,
+        "ts": 1700000000009000,
+        "wirelen": 157
+      },
+      {
+        "caplen": 98,
+        "direction": "up",
+        "file_offset": 4246,
+        "flow_id": 1,
+        "frame_no": 11,
+        "link_type": 1,
+        "payload_len": 44,
+        "tcp_flags": 24,
+        "ts": 1700000000010000,
+        "wirelen": 98
+      },
+      {
+        "caplen": 193,
+        "direction": "down",
+        "file_offset": 4360,
+        "flow_id": 1,
+        "frame_no": 12,
+        "link_type": 1,
+        "payload_len": 139,
+        "tcp_flags": 24,
+        "ts": 1700000000011000,
+        "wirelen": 193
+      },
+      {
+        "caplen": 54,
+        "direction": "up",
+        "file_offset": 4569,
+        "flow_id": 1,
+        "frame_no": 13,
+        "link_type": 1,
+        "payload_len": 0,
+        "tcp_flags": 17,
+        "ts": 1700000000012000,
+        "wirelen": 54
+      },
+      {
+        "caplen": 54,
+        "direction": "down",
+        "file_offset": 4639,
+        "flow_id": 1,
+        "frame_no": 14,
+        "link_type": 1,
+        "payload_len": 0,
+        "tcp_flags": 17,
+        "ts": 1700000000013000,
+        "wirelen": 54
+      },
+      {
+        "caplen": 54,
+        "direction": "up",
+        "file_offset": 4709,
+        "flow_id": 1,
+        "frame_no": 15,
+        "link_type": 1,
+        "payload_len": 0,
+        "tcp_flags": 16,
+        "ts": 1700000000014000,
+        "wirelen": 54
+      }
+    ],
+    "http": [
+      {
+        "flow_id": 1,
+        "frame_no": 4,
+        "host": "example.com",
+        "method": "GET",
+        "req_bytes": 0,
+        "resp_bytes": 3000,
+        "resp_frame_no": 5,
+        "status": 200,
+        "ts": 1700000000003000,
+        "uri": "/files/report.pdf",
+        "user_agent": "Walleye-Test/1.0"
+      },
+      {
+        "flow_id": 1,
+        "frame_no": 8,
+        "host": "example.com",
+        "method": "POST",
+        "req_bytes": 11,
+        "resp_bytes": 5,
+        "resp_frame_no": 10,
+        "status": 200,
+        "ts": 1700000000007000,
+        "uri": "/upload",
+        "user_agent": null
+      },
+      {
+        "flow_id": 1,
+        "frame_no": 11,
+        "host": "example.com",
+        "method": "GET",
+        "req_bytes": 0,
+        "resp_bytes": 4,
+        "resp_frame_no": 12,
+        "status": 200,
+        "ts": 1700000000010000,
+        "uri": "/dl?id=7",
+        "user_agent": null
+      }
+    ],
+    "tls": []
+  }
+}

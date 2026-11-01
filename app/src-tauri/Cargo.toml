@@ -1,0 +1,28 @@
+[package]
+name = "walleye-app"
+description = "Walleye desktop shell (Tauri 2). Thin: every command forwards to a walleye_core::Backend."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# Tauri's template convention: a library crate (used by main.rs and by mobile
+# targets) with a distinct name from the binary.
+name = "walleye_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+walleye-core.workspace = true
+walleye-engine.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

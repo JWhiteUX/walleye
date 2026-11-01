@@ -1,0 +1,23 @@
+# Benchmark queries: view<TAB>filter. Run against an indexed capture with
+# walleye-bench (docs/CONTRACTS.md §9). Gate: p95 < 1 s for every line on the
+# 10 GB scale fixture. Owner: Agent G (lead approves removals).
+flows	
+flows	host 10.0.0.23
+flows	bytes_up > 1MB
+flows	dst_port == 443 and bytes > 100KB
+flows	not app_proto == tls and proto == tcp
+flows	src_ip == 10.0.0.0/8 and not dst_ip == 10.0.0.0/8
+flows	duration > 10m
+flows	dns.query ~ "*.top"
+flows	tls.sni ~ "*update*" and bytes_down < 10KB
+flows	http.user_agent ~ "*MSIE*"
+flows	host 10.0.0.5 and dns.query ~ "*.top" and bytes_up > 1MB and not app_proto == tls
+dns	
+dns	dns.rcode == NXDOMAIN
+dns	dns.qtype in [TXT, NULL]
+dns	dns.query ~ "*.*.*.*.*"
+http	http.status >= 400
+http	http.method == POST and http.req_bytes > 10KB
+tls	tls.cert_self_signed == true
+tls	tls.ja4 ~ "t12*"
+frames	frame.tcp_flags == 2

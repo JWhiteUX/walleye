@@ -1,0 +1,1 @@
+http.user_agent ~ "curl*" and http.status >= 400

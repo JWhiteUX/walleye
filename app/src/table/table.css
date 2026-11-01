@@ -1,0 +1,39 @@
+.wl-table { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.wl-table-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--wl-space-2);
+  padding: var(--wl-space-1) var(--wl-space-2); border-bottom: 1px solid var(--wl-border);
+}
+.wl-table-body { flex: 1; min-height: 0; position: relative; }
+.wl-table-status {
+  display: flex; gap: var(--wl-space-3); align-items: baseline; padding: 2px var(--wl-space-2);
+  border-top: 1px solid var(--wl-border); color: var(--wl-text-muted); font-size: 12px; min-height: 22px;
+}
+.wl-table-msg { margin-left: auto; }
+.wl-sql summary { cursor: pointer; }
+.wl-sql code { display: block; white-space: pre-wrap; color: var(--wl-text); max-width: 60vw; }
+.wl-colfilter { display: flex; gap: var(--wl-space-1); align-items: center; }
+.wl-colfilter input { width: 160px; }
+
+.wl-grid { height: 100%; overflow: auto; position: relative; outline-offset: -2px; contain: strict; }
+.wl-grid-head { position: sticky; top: 0; z-index: 2; background: var(--wl-surface-2); }
+.wl-grid-body { position: relative; }
+.wl-grid-row {
+  display: grid; height: 24px; align-items: center; border-bottom: 1px solid var(--wl-surface-2);
+  position: absolute; top: 0; left: 0; right: 0; cursor: default;
+  contain: layout style paint;
+}
+.wl-grid-row.is-head {
+  position: relative; height: 26px; font-weight: 600; border-bottom: 1px solid var(--wl-border);
+}
+.wl-grid-cell { padding: 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-grid-cell.is-right { text-align: right; }
+.wl-grid-mark { text-align: center; color: var(--wl-accent); font-size: 10px; }
+.wl-grid-row:not(.is-head):hover { background: var(--wl-surface-2); }
+.wl-grid-row.is-selected { background: var(--wl-selection); box-shadow: inset 3px 0 0 var(--wl-accent); font-weight: 600; }
+.wl-grid-row.is-active { outline: 2px dashed var(--wl-focus); outline-offset: -2px; }
+.wl-grid:not(:focus) .wl-grid-row.is-active { outline-color: var(--wl-border); }
+.wl-sort {
+  all: unset; cursor: pointer; display: block; width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
+.wl-sort:focus-visible { outline: 2px solid var(--wl-focus); }
+.wl-grid-cell.is-right .wl-sort { text-align: right; }

@@ -1,0 +1,35 @@
+# Request-level beaconing: periodic HTTP requests on one long-lived (or a few)
+# connection(s), which flow-start beaconing cannot see (e.g. NetSupport RAT
+# POSTing every 60 s over a single TCP connection). Same series maths as
+# beacon.periodic, over `http` rows. Detector docs: crates/walleye-detect/src/http.rs.
+# Not double-counted: skipped for pairs beacon.periodic already reported, and
+# for pairs averaging fewer than min_requests_per_flow requests per connection.
+id: beacon.http_requests
+title: "HTTP beaconing to {dst_label} inside {conns} connection(s)"
+detector: http_beaconing
+attack_technique: T1071.001
+params:
+  min_count: 8
+  count_full: 48
+  min_duration_s: 300
+  duration_full_s: 3600
+  min_interval_s: 4
+  max_interval_s: 21600
+  merge_gap_s: 1.0        # requests closer than this are one check-in
+  jitter_full: 0.05
+  max_jitter: 0.35
+  max_payload_cv: 1.0
+  min_requests_per_flow: 2
+  named_host_factor: 0.35 # Host is a DNS name: keep-alive API pollers are common; caps a perfect poller at ~31 < min_score
+  allowlist_factor: 0.25
+  known_good_factor: 0.35
+  prevalence_min_hosts: 3
+  prevalence_ratio: 0.3
+  prevalence_factor: 0.3
+weights:
+  regularity: 45
+  count: 15
+  duration: 15
+  payload_uniformity: 15
+min_score: 35
+explanation: "{src} sent {requests} HTTP requests to {dst_label} with {host_kind} over {conns} connection(s) ({per_conn} per connection), one check-in every {interval_s}s ±{jitter_pct}% (MAD) for {duration_min} min [{breakdown}]"

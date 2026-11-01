@@ -1,0 +1,12 @@
+{
+  "name": "walleye",
+  "private": true,
+  "packageManager": "pnpm@11.10.0",
+  "scripts": {
+    "tauri": "pnpm --dir app tauri",
+    "dev": "pnpm --dir app dev",
+    "lint": "pnpm --dir app lint",
+    "test": "pnpm --dir app test",
+    "e2e": "pnpm --dir app e2e"
+  }
+}

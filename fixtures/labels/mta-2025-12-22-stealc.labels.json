@@ -1,0 +1,9 @@
+{
+  "scenario": "external",
+  "source": "https://www.malware-traffic-analysis.net/2025/12/22/index.html (2025-12-22-traffic-from-StealC-infection.zip, member 2025-12-22-post-infection-traffic-for-StealC.pcap)",
+  "sha256": "2d2bb58112caf0a5f8c76a50b868d2586ea6d421f2c31571a80ba5de5e3cca62",
+  "c2_hosts": ["10.12.22.101"],
+  "bad_destinations": ["37.221.66.166"],
+  "benign": false,
+  "notes": "StealC post-infection traffic. C2 hxxp://37.221.66.166/4a815a53876a4172.php (HTTP, port 80). Lure/download domains gorcerie.com, media.maxdatahost1.lat, arch2.megafilehost8.mom appear in the other (pre-infection) pcap, which was not extracted. Infected host from tcpdump of C2 packet headers."
+}

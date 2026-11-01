@@ -1,0 +1,18 @@
+[package]
+name = "walleye-devbridge"
+description = "DEV ONLY: serve the real Backend over 127.0.0.1 so Playwright can drive the UI against it. Never shipped."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+walleye-core.workspace = true
+walleye-engine.workspace = true
+serde_json.workspace = true
+tiny_http = "0.12"
+getrandom = "0.2"
+
+[lints]
+workspace = true

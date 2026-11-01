@@ -1,0 +1,68 @@
+/* Case panel. Uses the shared --wl-* tokens only. */
+.wl-case {
+  padding: var(--wl-space-2);
+  overflow: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wl-space-2);
+  border-left: 1px solid var(--wl-border);
+}
+.wl-case h2 { font-size: 13px; margin: 0; }
+.wl-case h3 { font-size: 12px; margin: 0; }
+.wl-case-header { display: flex; align-items: baseline; gap: var(--wl-space-2); }
+.wl-case-muted { color: var(--wl-text-muted); }
+.wl-case button,
+.wl-case select,
+.wl-case textarea {
+  font: inherit;
+  color: var(--wl-text);
+  background: var(--wl-surface-2);
+  border: 1px solid var(--wl-border);
+  border-radius: var(--wl-radius);
+}
+.wl-case button { padding: 2px var(--wl-space-2); cursor: pointer; }
+.wl-case button:disabled { cursor: default; color: var(--wl-text-muted); }
+.wl-case textarea { width: 100%; padding: var(--wl-space-1); resize: vertical; }
+.wl-case-exports { display: flex; flex-wrap: wrap; align-items: center; gap: var(--wl-space-1); }
+.wl-case-inline-label { color: var(--wl-text-muted); }
+.wl-case-status:empty { display: none; }
+.wl-case-status { overflow-wrap: anywhere; }
+.wl-case-error { color: var(--wl-danger); }
+.wl-case-section { display: flex; flex-direction: column; gap: var(--wl-space-1); }
+.wl-case-section-head { display: flex; align-items: center; gap: var(--wl-space-2); flex-wrap: wrap; }
+.wl-case-section-head h3 { margin-right: auto; }
+.wl-case-table-wrap { overflow-x: auto; }
+.wl-case-table { border-collapse: collapse; width: 100%; }
+.wl-case-table th,
+.wl-case-table td {
+  text-align: left;
+  padding: 2px var(--wl-space-1);
+  border-bottom: 1px solid var(--wl-border);
+  vertical-align: top;
+}
+.wl-case-table th { color: var(--wl-text-muted); font-weight: 600; }
+.wl-case-value { overflow-wrap: anywhere; word-break: break-all; }
+.wl-case button.wl-case-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--wl-accent);
+  text-decoration: underline;
+}
+.wl-case-badge {
+  display: inline-block;
+  padding: 0 var(--wl-space-1);
+  border: 1px solid var(--wl-text-muted);
+  border-radius: var(--wl-radius);
+  font-size: 11px;
+}
+.wl-case-note-form { display: flex; flex-direction: column; gap: var(--wl-space-1); align-items: flex-start; }
+.wl-case-pins { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--wl-space-2); }
+.wl-case-pins li { border: 1px solid var(--wl-border); border-radius: var(--wl-radius); padding: var(--wl-space-1) var(--wl-space-2); background: var(--wl-surface); }
+.wl-case-pin-head { display: flex; flex-wrap: wrap; gap: var(--wl-space-2); align-items: baseline; }
+.wl-case-pin-what { overflow-wrap: anywhere; }
+.wl-case-kind { font-weight: 600; }
+.wl-case-note { margin: var(--wl-space-1) 0; white-space: pre-wrap; overflow-wrap: anywhere; border-left: 2px solid var(--wl-border); padding-left: var(--wl-space-2); }
+.wl-case-actions { display: flex; flex-wrap: wrap; gap: var(--wl-space-1); margin-top: var(--wl-space-1); }
+.wl-case-edit { display: flex; flex-direction: column; gap: var(--wl-space-1); margin-top: var(--wl-space-1); }
