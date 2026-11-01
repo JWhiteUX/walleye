@@ -19,7 +19,7 @@ mod writer;
 
 pub use filter::{Compiled, Expr, Param};
 pub use index::{Index, MAX_LIMIT, frame_summary};
-pub use wifi::wifi_summary;
+pub use wifi::{CLIENT_LIST_CAP, wifi_summary};
 pub use writer::IndexWriter;
 
 #[cfg(test)]

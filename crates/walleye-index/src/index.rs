@@ -49,6 +49,9 @@ const BULK_BYTES: i64 = 1 << 20;
 /// open when `wifi` has at least this many rows; below it they stay plain
 /// views (cheap to recompute). See `create_wifi_views`.
 const MATERIALIZE_MIN_ROWS: i64 = 50_000;
+/// Read-side DuckDB memory cap and spill directory (inside the index dir).
+const READ_MEMORY_LIMIT: &str = "2GB";
+const READ_SPILL_DIR: &str = ".spill-read";
 
 pub struct Index {
     dir: PathBuf,
@@ -291,6 +294,19 @@ impl Index {
         let dir = fs::canonicalize(index_dir).map_err(|e| io_ctx("index dir", e))?;
         let conn = Connection::open_in_memory().map_err(db)?;
         harden(&conn)?;
+        // Bounded memory (security review L2): the materialized 802.11
+        // aggregates and every query share this in-memory database. 2 GB
+        // matches the writer's budget: a fixed cap is predictable on any
+        // machine, far above the working set measured at 2 M wifi rows
+        // (open + queries well under 1 GB), and bigger intermediates spill
+        // to `<index>/.spill-read` instead of growing without bound. That
+        // dir is inside `allowed_directories` (set below, before
+        // `lock_configuration`).
+        conn.execute_batch(&format!(
+            "SET memory_limit = '{READ_MEMORY_LIMIT}'; SET temp_directory = {};",
+            sql_path(&dir.join(READ_SPILL_DIR))
+        ))
+        .map_err(db)?;
         conn.execute_batch(filter::IP_NUM_MACRO).map_err(db)?;
         // Parquet footers are cached across queries.
         let _ = conn.execute_batch("SET enable_object_cache = true;");
@@ -1369,6 +1385,27 @@ mod tests {
             .expect_err("locked");
         assert!(e.to_string().to_lowercase().contains("lock"), "{e}");
         assert!(c.execute_batch("INSTALL httpfs").is_err());
+        // Bounded memory, spilling inside the index dir (review L2).
+        let (mem, tmp): (String, String) = c
+            .query_row(
+                "SELECT current_setting('memory_limit'), current_setting('temp_directory')",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("settings");
+        assert!(mem.contains("GiB") || mem.contains("GB"), "{mem}");
+        assert!(
+            Path::new(&tmp).starts_with(idx.dir()) && tmp.ends_with(READ_SPILL_DIR),
+            "{tmp}"
+        );
+        let e = c
+            .execute_batch("SET memory_limit = '64GB'")
+            .expect_err("locked");
+        assert!(e.to_string().to_lowercase().contains("lock"), "{e}");
+        let e = c
+            .execute_batch("SET temp_directory = '/tmp'")
+            .expect_err("locked");
+        assert!(e.to_string().to_lowercase().contains("lock"), "{e}");
         c.execute_batch("SELECT count(*) FROM flows")
             .expect("own files readable");
         drop(c);

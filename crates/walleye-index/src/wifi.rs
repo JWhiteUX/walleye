@@ -6,6 +6,10 @@
 
 use walleye_core::{WifiKind, WifiRow};
 
+/// Max values kept in `wifi_clients.probed_ssids` and `.bssids` (security
+/// review L1).
+pub const CLIENT_LIST_CAP: usize = 64;
+
 /// Kinds whose `src`/`dst` mark a station that is associated with (or
 /// joining) the BSS.
 const STATION_KINDS: &str = "('data', 'null', 'eapol', 'auth', 'assoc_req', 'reassoc_req')";
@@ -84,6 +88,11 @@ pub(crate) fn aps_select() -> String {
 /// - `probed_ssids`: sorted distinct non-empty SSIDs of its probe requests.
 /// - `bssids`: sorted distinct BSSIDs (other than itself) of its
 ///   data/null/eapol/auth/(re)assoc-request rows.
+///
+/// Both lists keep only their first `CLIENT_LIST_CAP` values in sort order:
+/// one hostile station probing for 500k SSIDs must not make a multi-MB row.
+/// Filters on `client.probed`/`client.bssid` see the capped list; the full
+/// set stays queryable on the `wifi` view (`mac X and wifi.kind == probe_req`).
 pub(crate) fn clients_select() -> String {
     format!(
         "WITH ap AS (SELECT DISTINCT bssid FROM wifi WHERE kind IN {ADV_KINDS} AND bssid IS NOT NULL), \
@@ -98,15 +107,16 @@ pub(crate) fn clients_select() -> String {
                WHERE dst IS NOT NULL AND dst IS DISTINCT FROM tx AND dst IS DISTINCT FROM src) \
          SELECT a.mac AS mac, {rnd} AS randomized, min(a.ts) AS first_ts, max(a.ts) AS last_ts, \
             CAST(count(*) FILTER (WHERE a.is_tx) AS UBIGINT) AS frames, \
-            coalesce(list(DISTINCT a.ssid ORDER BY a.ssid) FILTER (WHERE a.is_tx AND a.kind = 'probe_req' AND a.ssid <> ''), \
-               CAST([] AS VARCHAR[])) AS probed_ssids, \
-            coalesce(list(DISTINCT a.bssid ORDER BY a.bssid) FILTER (WHERE a.kind IN {STATION_KINDS} \
-               AND a.bssid IS NOT NULL AND a.bssid <> a.mac), CAST([] AS VARCHAR[])) AS bssids, \
+            coalesce(list_slice(list(DISTINCT a.ssid ORDER BY a.ssid) FILTER (WHERE a.is_tx AND a.kind = 'probe_req' AND a.ssid <> ''), \
+               1, {cap}), CAST([] AS VARCHAR[])) AS probed_ssids, \
+            coalesce(list_slice(list(DISTINCT a.bssid ORDER BY a.bssid) FILTER (WHERE a.kind IN {STATION_KINDS} \
+               AND a.bssid IS NOT NULL AND a.bssid <> a.mac), 1, {cap}), CAST([] AS VARCHAR[])) AS bssids, \
             CAST(max(a.signal_dbm) FILTER (WHERE a.is_tx) AS SMALLINT) AS signal_max, \
             CAST(min(a.frame_no) AS UBIGINT) AS first_frame \
          FROM app a WHERE a.mac IN (SELECT mac FROM sta) GROUP BY a.mac",
         uni = unicast("mac"),
         rnd = randomized("a.mac"),
+        cap = CLIENT_LIST_CAP,
     )
 }
 
@@ -119,9 +129,23 @@ fn addr(a: &Option<String>) -> &str {
     a.as_deref().unwrap_or("?")
 }
 
+/// SSIDs are attacker-chosen text that ingest keeps verbatim (including
+/// `"`); escape `\` and `"` so a summary's quoted SSID cannot be closed early
+/// and spoof the fields after it.
+fn escape_quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c == '"' || c == '\\' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn ssid_text(s: &Option<String>, empty: &str) -> String {
     match s.as_deref() {
-        Some(s) if !s.is_empty() => format!("\"{s}\""),
+        Some(s) if !s.is_empty() => format!("\"{}\"", escape_quoted(s)),
         _ => empty.to_string(),
     }
 }
@@ -225,6 +249,16 @@ mod tests {
             wifi_summary(&p),
             "Probe request (any) from 42:00:5e:00:53:9c"
         );
+        // Hostile SSIDs cannot close the quote and spoof later fields (M4).
+        let mut b = row(WifiKind::Beacon);
+        b.ssid = Some("Free\" ch 6 wpa3".into());
+        b.security = Some("open".into());
+        assert_eq!(wifi_summary(&b), "Beacon \"Free\\\" ch 6 wpa3\" ch 6 open");
+        b.ssid = Some("a\\\"".into());
+        assert_eq!(wifi_summary(&b), "Beacon \"a\\\\\\\"\" ch 6 open");
+        let mut p = row(WifiKind::ProbeResp);
+        p.ssid = Some("x\"y".into());
+        assert!(wifi_summary(&p).starts_with("Probe response \"x\\\"y\" → "));
         for k in WifiKind::ALL {
             let mut r = row(k);
             r.src = None;

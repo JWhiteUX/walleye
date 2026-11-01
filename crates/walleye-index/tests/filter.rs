@@ -538,6 +538,12 @@ fn mac_literals_lex_as_one_value_without_breaking_ipv6() {
     // `~` globs a MAC field case-insensitively.
     let o = c("wifi.tx ~ \"42:00:*\"", View::Wifi);
     assert_eq!(o.sql, "(tx ILIKE ? ESCAPE '\\')");
+    // MAC glob text is normalized like stored MACs (review L4).
+    let o = c("wifi.src ~ \"AA-BB-*\"", View::Wifi);
+    assert_eq!(o.params, vec![Param::Str("aa:bb:%".into())]);
+    // Other text fields keep the pattern as typed.
+    let o = c("wifi.ssid ~ \"AB-C*\"", View::Wifi);
+    assert_eq!(o.params, vec![Param::Str("AB-C%".into())]);
     // IPv6 literals still parse as IPs.
     for t in [
         "host fe80::1",
