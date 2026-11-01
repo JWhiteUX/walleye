@@ -10,6 +10,8 @@ Walleye is a desktop app for security analysts that analyzes packet captures (PC
 
 Every finding, indicator and report line cites frame numbers and the capture's SHA-256, so any claim can be checked against the raw packets.
 
+**Wi-Fi (802.11) captures** from monitor-mode tools such as the WiFi Coconut, airodump-ng or Kismet (link types 105 and 127) open too. Walleye adds Access points, Clients and Wi-Fi frames tabs, a timeline with one lane per transmitting device, and detections for deauthentication floods, evil twins and karma access points. A deauth flood is judged partly by signal strength: frames that arrive at the same strength as the access point's own beacons most likely came from the real access point. Filter with `wifi.*`, `ap.*` and `client.*` fields or `mac aa:bb:cc:dd:ee:ff`. Unencrypted Wi-Fi traffic (open networks, Apple AWDL) also feeds the normal connection views.
+
 ![Walleye triaging a StealC infection: a timeline selection narrows the queue to the C2 finding, and its first check-in is decoded in the packet pane](docs/images/triage.png)
 
 ## Status
@@ -34,9 +36,9 @@ More on these and on the known gaps:
 
 | Part | Path | What it does |
 |---|---|---|
-| Ingest | `crates/walleye-ingest` | Reads pcap/pcapng and reassembles TCP. Decodes DNS, HTTP/1.x, TLS (JA4/JA4S) and X.509. |
+| Ingest | `crates/walleye-ingest` | Reads pcap/pcapng and reassembles TCP. Decodes DNS, HTTP/1.x, TLS (JA4/JA4S), X.509, and 802.11 with radiotap. |
 | Index | `crates/walleye-index` | Writes the index as zstd-compressed Parquet and queries it with DuckDB. The filter language compiles to parameterized SQL only. |
-| Detect | `crates/walleye-detect`, `rules/` | YAML rules for beaconing, DNS tunneling, DGA domains, cleartext HTTP on TLS ports and repeated-POST exfiltration. |
+| Detect | `crates/walleye-detect`, `rules/` | YAML rules for beaconing, DNS tunneling, DGA domains, cleartext HTTP on TLS ports, repeated-POST exfiltration, and Wi-Fi deauth floods, evil twins and karma access points. |
 | Case | `crates/walleye-case` | Verdicts, pins, notes, IOC export and reports. |
 | Engine | `crates/walleye-engine` | Connects the parts above behind one `Backend` trait. |
 | App | `app/src-tauri`, `app/src` | Tauri 2 desktop shell, with a React + TypeScript + Vite UI. |

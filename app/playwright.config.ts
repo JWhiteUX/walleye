@@ -23,5 +23,18 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 60_000,
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  // Timing specs (*-perf.spec.ts) run after everything else, one worker at a
+  // time, so their frame budgets aren't measured while other specs load the
+  // machine.
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] }, testIgnore: ["real/**", "**/*-perf.spec.ts"] },
+    {
+      name: "perf",
+      use: { ...devices["Desktop Chrome"] },
+      testMatch: ["**/*-perf.spec.ts"],
+      dependencies: ["chromium"],
+      fullyParallel: false,
+      workers: 1,
+    },
+  ],
 });

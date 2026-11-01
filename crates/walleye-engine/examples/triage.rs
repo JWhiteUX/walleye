@@ -1,6 +1,7 @@
 //! Opens a capture with the real engine and prints a triage summary: timing,
 //! row counts per view, the timeline lane kind and the top findings with their
-//! reasons. Usage: `triage <capture> <data_dir> [top_n]`.
+//! reasons. Usage: `triage <capture> <data_dir> [top_n] [findings.json]`; the
+//! optional last argument writes all findings as JSON (for `walleye-eval`).
 //!
 //! Output contains capture-derived strings (addresses, names); keep it out of
 //! the repo when the capture is private.
@@ -15,11 +16,12 @@ use walleye_engine::{Engine, EngineConfig};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let (capture, data, top) = match args.as_slice() {
-        [c, d] => (c, d, 10usize),
-        [c, d, n] => (c, d, n.parse()?),
+    let (capture, data, top, out) = match args.as_slice() {
+        [c, d] => (c, d, 10usize, None),
+        [c, d, n] => (c, d, n.parse()?, None),
+        [c, d, n, o] => (c, d, n.parse()?, Some(o)),
         _ => {
-            eprintln!("usage: triage <capture> <data_dir> [top_n]");
+            eprintln!("usage: triage <capture> <data_dir> [top_n] [findings.json]");
             std::process::exit(2);
         }
     };
@@ -75,6 +77,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let findings = engine.findings(None)?;
     println!("findings: {}", findings.len());
+    if let Some(o) = out {
+        std::fs::write(o, serde_json::to_vec_pretty(&findings)?)?;
+    }
     for (i, f) in findings.iter().take(top).enumerate() {
         println!(
             "{:>2}. {:>5.1} {} {} [{}] {}",
