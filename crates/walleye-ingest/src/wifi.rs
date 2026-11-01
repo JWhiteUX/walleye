@@ -14,8 +14,6 @@
 
 use walleye_core::WifiKind;
 
-use crate::util::escape_bytes;
-
 /// 802.11 frame types (frame control bits 2–3).
 pub const TYPE_MGMT: u8 = 0;
 pub const TYPE_CTRL: u8 = 1;
@@ -565,45 +563,146 @@ pub fn is_wpa_vendor(data: &[u8]) -> bool {
     data.len() >= 4 && data[..4] == [0x00, 0x50, 0xf2, 0x01]
 }
 
-/// Format characters (Unicode Cf) that can reorder or hide text: shown
-/// escaped, like control characters.
+/// Characters that render as nothing (or reorder/alter neighbouring text) and
+/// so could make two different SSIDs look identical: every Unicode Cf
+/// (format), Zl/Zp (line/paragraph separators), Hangul fillers, the
+/// combining grapheme joiner, variation selectors, Mongolian free variation
+/// selectors, the Braille blank and the whole tag block. Cc is checked
+/// separately (`char::is_control`). Table from Unicode 15.1, no dependency.
 fn is_invisible(c: char) -> bool {
     matches!(c,
-        '\u{00ad}' | '\u{061c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' |
+        // Cf
+        '\u{00ad}' | '\u{0600}'..='\u{0605}' | '\u{061c}' | '\u{06dd}' | '\u{070f}' |
+        '\u{0890}'..='\u{0891}' | '\u{08e2}' | '\u{180e}' | '\u{200b}'..='\u{200f}' |
         '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206f}' |
-        '\u{feff}' | '\u{fff9}'..='\u{fffb}')
+        '\u{feff}' | '\u{fff9}'..='\u{fffb}' | '\u{110bd}' | '\u{110cd}' |
+        '\u{13430}'..='\u{1343f}' | '\u{1bca0}'..='\u{1bca3}' | '\u{1d173}'..='\u{1d17a}' |
+        // Tag characters (incl. the Cf ones) and unassigned rest of the block.
+        '\u{e0000}'..='\u{e007f}' |
+        // Zl, Zp
+        '\u{2028}' | '\u{2029}' |
+        // Hangul fillers, Braille blank
+        '\u{115f}' | '\u{1160}' | '\u{3164}' | '\u{ffa0}' | '\u{2800}' |
+        // Combining grapheme joiner, variation selectors, Mongolian FVS
+        '\u{034f}' | '\u{fe00}'..='\u{fe0f}' | '\u{e0100}'..='\u{e01ef}' |
+        '\u{180b}'..='\u{180d}' | '\u{180f}')
 }
 
-/// SSID as printable text: clipped to 32 bytes; an all-zero SSID (hidden
-/// network placeholder) is "". Valid UTF-8 is kept except control and
-/// invisible format characters, which are escaped (`\xHH`, `\u{...}`), as is
-/// `\`. Anything that is not UTF-8 goes through `escape_bytes`.
-pub fn sanitize_ssid(raw: &[u8]) -> String {
-    let raw = raw.get(..raw.len().min(MAX_SSID)).unwrap_or(raw);
+/// Combining marks (Mn) of the common combining blocks. Escaped only as the
+/// first character of an SSID, where there is no base for them to attach to.
+fn is_leading_combining(c: char) -> bool {
+    matches!(c,
+        '\u{0300}'..='\u{036f}' | '\u{0483}'..='\u{0489}' | '\u{0591}'..='\u{05c7}' |
+        '\u{0610}'..='\u{061a}' | '\u{064b}'..='\u{065f}' | '\u{0670}' |
+        '\u{06d6}'..='\u{06ed}' | '\u{0e31}' | '\u{0e34}'..='\u{0e3a}' |
+        '\u{0e47}'..='\u{0e4e}' | '\u{1ab0}'..='\u{1aff}' | '\u{1dc0}'..='\u{1dff}' |
+        '\u{20d0}'..='\u{20ff}' | '\u{302a}'..='\u{302f}' | '\u{3099}'..='\u{309a}' |
+        '\u{fe20}'..='\u{fe2f}' | '\u{1d165}'..='\u{1d169}' | '\u{1d16d}'..='\u{1d172}' |
+        '\u{1d17b}'..='\u{1d182}')
+}
+
+/// Length of the UTF-8 sequence a lead byte starts (0 = not a lead byte).
+fn utf8_len(b: u8) -> usize {
+    match b {
+        0x00..=0x7f => 1,
+        0xc2..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf4 => 4,
+        _ => 0,
+    }
+}
+
+/// SSID as printable text (CONTRACTS §11.1).
+///
+/// - Clipped to 32 bytes. Only when that clip cut a valid multi-byte
+///   character in half are its leading bytes dropped; stray or incomplete
+///   bytes in an SSID of ≤ 32 bytes are kept as `\xHH`, so "CorpNet" +
+///   `e2 80` never equals "CorpNet".
+/// - An all-NUL SSID (hidden network placeholder) is "".
+/// - Valid UTF-8 is kept, except: `\` → `\\`; ASCII controls and invalid
+///   bytes → `\xHH`; other controls, invisible characters (`is_invisible`)
+///   and a combining mark in first position → `\u{…}`.
+/// - `"` is kept as is; quote with [`quote_ssid`] when splicing into text.
+pub fn sanitize_ssid(full: &[u8]) -> String {
+    let mut raw = full.get(..full.len().min(MAX_SSID)).unwrap_or(full);
     if raw.iter().all(|&b| b == 0) {
         return String::new();
     }
-    let text = match std::str::from_utf8(raw) {
-        Ok(s) => s,
-        // Clipping may have cut a multi-byte character: keep the valid prefix.
-        Err(e) if e.error_len().is_none() && e.valid_up_to() > 0 => {
-            std::str::from_utf8(raw.get(..e.valid_up_to()).unwrap_or(&[])).unwrap_or("")
+    if full.len() > MAX_SSID {
+        // Did the clip cut a character that was complete in the original?
+        for back in 1..=3usize {
+            let Some(s) = MAX_SSID.checked_sub(back) else {
+                break;
+            };
+            let n = full.get(s).map_or(0, |&b| utf8_len(b));
+            if n > back {
+                if full
+                    .get(s..s + n)
+                    .is_some_and(|ch| std::str::from_utf8(ch).is_ok())
+                {
+                    raw = raw.get(..s).unwrap_or(raw);
+                }
+                break;
+            }
+            if n != 0 {
+                break; // a complete character ends at the clip
+            }
         }
-        Err(_) => return escape_bytes(raw, MAX_SSID),
-    };
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        if c == '\\' {
-            out.push_str("\\\\");
-        } else if c.is_ascii_control() {
-            out.push_str(&format!("\\x{:02x}", c as u32));
-        } else if c.is_control() || is_invisible(c) {
-            out.push_str(&format!("\\u{{{:x}}}", c as u32));
-        } else {
-            out.push(c);
+    }
+    let mut out = String::with_capacity(raw.len() + 8);
+    let mut first = true;
+    for chunk in raw.utf8_chunks() {
+        for c in chunk.valid().chars() {
+            if c == '\\' {
+                out.push_str("\\\\");
+            } else if c.is_ascii_control() {
+                out.push_str(&format!("\\x{:02x}", c as u32));
+            } else if c.is_control() || is_invisible(c) || (first && is_leading_combining(c)) {
+                out.push_str(&format!("\\u{{{:x}}}", c as u32));
+            } else {
+                out.push(c);
+            }
+            first = false;
+        }
+        for &b in chunk.invalid() {
+            out.push_str(&format!("\\x{b:02x}"));
+            first = false;
         }
     }
     out
+}
+
+/// `s` in double quotes with `"` escaped as `\"`, for splicing a sanitized
+/// SSID into a label or summary. `\` is already escaped by `sanitize_ssid`,
+/// so the result is unambiguous.
+pub fn quote_ssid(s: &str) -> String {
+    let mut q = String::with_capacity(s.len() + 2);
+    q.push('"');
+    for c in s.chars() {
+        if c == '"' {
+            q.push_str("\\\"");
+        } else {
+            q.push(c);
+        }
+    }
+    q.push('"');
+    q
+}
+
+/// IEEE 802.3 CRC-32 (the 802.11 FCS), bitwise: used once per decoded frame.
+pub fn crc32(data: &[u8]) -> u32 {
+    let mut c = 0xffff_ffffu32;
+    for &b in data {
+        c ^= u32::from(b);
+        for _ in 0..8 {
+            c = if c & 1 != 0 {
+                0xedb8_8320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
+        }
+    }
+    !c
 }
 
 /// What a management body says, for the `wifi` row.
@@ -1153,6 +1252,85 @@ mod tests {
         let m = parse_mgmt_body(8, &beacon_body(1, b"evil\x07\x7f", &[]));
         assert_eq!(m.ssid.as_deref(), Some("evil\\x07\\x7f"));
         assert_eq!(m.channel, Some(6));
+    }
+
+    /// Security review M2: stray trailing bytes are not silently dropped.
+    #[test]
+    fn ssid_stray_trailing_bytes_are_escaped_not_dropped() {
+        let spoof = [b'C', b'o', b'r', b'p', b'N', b'e', b't', 0xe2, 0x80];
+        assert_eq!(sanitize_ssid(&spoof), "CorpNet\\xe2\\x80");
+        assert_ne!(sanitize_ssid(&spoof), sanitize_ssid(b"CorpNet"));
+        assert_eq!(sanitize_ssid(&[b'N', b'e', b't', 0xf0]), "Net\\xf0");
+        assert_eq!(sanitize_ssid(&[0xe2, 0x80]), "\\xe2\\x80");
+        // Exactly 32 bytes ending in an incomplete char: nothing was clipped.
+        let mut x = vec![b'z'; 30];
+        x.extend_from_slice(&[0xe2, 0x82]);
+        assert_eq!(sanitize_ssid(&x), format!("{}\\xe2\\x82", "z".repeat(30)));
+        // 34 bytes whose 32nd byte starts a char the clip cut: dropped.
+        let mut y = vec![b'z'; 31];
+        y.extend_from_slice("€".as_bytes());
+        assert_eq!(sanitize_ssid(&y), "z".repeat(31));
+        // Clip cutting an already-invalid sequence keeps it escaped.
+        let mut z = vec![b'z'; 31];
+        z.extend_from_slice(&[0xe2, 0x41, 0x41]);
+        assert_eq!(sanitize_ssid(&z), format!("{}\\xe2", "z".repeat(31)));
+        // A char ending exactly at 32 bytes is kept.
+        let mut w = vec![b'z'; 29];
+        w.extend_from_slice("€".as_bytes());
+        w.push(b'!');
+        assert_eq!(sanitize_ssid(&w), format!("{}€", "z".repeat(29)));
+        // Valid text around invalid bytes stays readable.
+        assert_eq!(sanitize_ssid(&[0xff, b'C', 0xc3, 0xa9]), "\\xffCé");
+    }
+
+    /// Security review M3: invisible characters cannot make look-alikes.
+    #[test]
+    fn ssid_invisible_characters_are_escaped() {
+        let cases = [
+            ("CorpNet\u{e0041}", "CorpNet\\u{e0041}"),
+            ("Corp\u{e0001}Net", "Corp\\u{e0001}Net"),
+            ("Corp\u{115f}Net", "Corp\\u{115f}Net"),
+            ("Corp\u{1160}Net", "Corp\\u{1160}Net"),
+            ("Corp\u{3164}Net", "Corp\\u{3164}Net"),
+            ("Corp\u{ffa0}Net", "Corp\\u{ffa0}Net"),
+            ("Corp\u{034f}Net", "Corp\\u{34f}Net"),
+            ("CorpNet\u{fe0f}", "CorpNet\\u{fe0f}"),
+            ("CorpNet\u{e0100}", "CorpNet\\u{e0100}"),
+            ("Corp\u{180b}Net", "Corp\\u{180b}Net"),
+            ("Corp\u{2028}Net\u{2029}", "Corp\\u{2028}Net\\u{2029}"),
+            ("Corp\u{200b}Net", "Corp\\u{200b}Net"),
+            ("\u{0600}Net", "\\u{600}Net"),
+            ("Corp\u{2800}Net", "Corp\\u{2800}Net"),
+            ("Corp\u{85}Net", "Corp\\u{85}Net"),
+            // A combining mark with no base; with a base it is kept.
+            ("\u{0301}CorpNet", "\\u{301}CorpNet"),
+            ("Cafe\u{0301}", "Cafe\u{0301}"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(sanitize_ssid(input.as_bytes()), want, "{input:?}");
+        }
+        // Visible non-ASCII stays as is.
+        for ok in ["Café", "Пример", "東京-WiFi", "☕ Bar", "ﾛﾋﾞｰ"] {
+            assert_eq!(sanitize_ssid(ok.as_bytes()), ok);
+        }
+    }
+
+    /// Security review M4: `"` stays raw in the column, escaped when quoted.
+    #[test]
+    fn ssid_quotes_are_escaped_when_spliced() {
+        let s = sanitize_ssid(br#"Free" ch 6 wpa3"#);
+        assert_eq!(s, r#"Free" ch 6 wpa3"#);
+        assert_eq!(quote_ssid(&s), r#""Free\" ch 6 wpa3""#);
+        // Backslash before a quote cannot un-escape it.
+        let t = sanitize_ssid(br#"a\"b"#);
+        assert_eq!(t, r#"a\\"b"#);
+        assert_eq!(quote_ssid(&t), r#""a\\\"b""#);
+        assert_eq!(quote_ssid(""), r#""""#);
+    }
+
+    #[test]
+    fn crc32_check_value() {
+        assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
     }
 
     #[test]

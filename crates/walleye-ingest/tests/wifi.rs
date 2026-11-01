@@ -360,3 +360,117 @@ fn decode_tree_for_generated_frames_stays_in_range() {
         assert!(seen.contains(f), "{f} never set: {seen:?}");
     }
 }
+
+/// (field, value) pairs of a decode tree.
+fn tree_fields(t: &[walleye_core::ipc::DecodeNode], out: &mut Vec<(String, String)>) {
+    for n in t {
+        if let (Some(f), Some(v)) = (&n.field, &n.value) {
+            out.push((f.clone(), v.clone()));
+        }
+        tree_fields(&n.children, out);
+    }
+}
+
+fn check_row_matches_tree(r: &WifiRow, rec: &[u8], link_type: u32) {
+    let mut f = Vec::new();
+    tree_fields(&decode_frame(link_type, rec), &mut f);
+    let vals = |name: &str| -> Vec<&str> {
+        f.iter()
+            .filter(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+            .collect()
+    };
+    let ctx = format!("frame {} {:?}", r.frame_no, r.kind);
+    for (name, col) in [
+        ("wifi.src", &r.src),
+        ("wifi.dst", &r.dst),
+        ("wifi.bssid", &r.bssid),
+        ("wifi.ssid", &r.ssid),
+        ("wifi.security", &r.security),
+    ] {
+        let v = vals(name);
+        match col {
+            Some(c) => assert!(
+                v.is_empty() || v == [c.as_str()],
+                "{ctx}: {name} tree {v:?} row {c}"
+            ),
+            None => assert!(v.is_empty(), "{ctx}: {name} tree {v:?} row None"),
+        }
+    }
+    // Columns the tree must show whenever the row has them.
+    for (name, col) in [
+        ("wifi.ssid", r.ssid.clone()),
+        ("wifi.security", r.security.clone()),
+        ("wifi.signal", r.signal_dbm.map(|s| s.to_string())),
+        ("wifi.freq", r.freq_mhz.map(|s| s.to_string())),
+        ("wifi.reason", r.reason.map(|s| s.to_string())),
+    ] {
+        if let Some(c) = col {
+            assert!(
+                vals(name).contains(&c.as_str()),
+                "{ctx}: {name} {c} not in {f:?}"
+            );
+        }
+    }
+    if let Some(ch) = r.channel {
+        assert!(
+            vals("wifi.channel").contains(&ch.to_string().as_str()),
+            "{ctx}"
+        );
+    }
+    assert_eq!(!vals("wifi.protected").is_empty(), r.protected, "{ctx}");
+}
+
+/// Security review L3: for every non-truncated generated frame, the decode
+/// tree shows the same values the `wifi` row stores.
+#[test]
+fn decode_tree_agrees_with_rows_on_generated_frames() {
+    let (cap, _) = gen_wifi(Scenario::Wifi, 4, 6);
+    let s = collect(&cap, &IngestOptions::default());
+    let by_frame: BTreeMap<u64, &WifiRow> = s.rows.wifi.iter().map(|r| (r.frame_no, r)).collect();
+    let mut checked = 0;
+    for fr in &s.rows.frames {
+        let Some(r) = by_frame.get(&fr.frame_no) else {
+            continue;
+        };
+        let o = fr.file_offset as usize;
+        check_row_matches_tree(r, &cap[o..o + fr.caplen as usize], 127);
+        checked += 1;
+    }
+    assert_eq!(checked, s.rows.wifi.len());
+}
+
+/// Security review L3: a snapped record (caplen < wirelen) keeps its
+/// trailing bytes in ingest, and the tree does the same.
+#[test]
+fn snapped_records_agree_between_row_and_tree() {
+    let (cap, _) = gen_wifi(Scenario::Wifi, 4, 2);
+    // Rewrite every record with caplen = wirelen - 3 (snapped mid-FCS).
+    let mut out = cap[..24].to_vec();
+    let mut p = 24;
+    while p + 16 <= cap.len() {
+        let n = u32::from_le_bytes(cap[p + 8..p + 12].try_into().expect("test input")) as usize;
+        let keep = n - 3;
+        out.extend_from_slice(&cap[p..p + 8]);
+        out.extend_from_slice(&(keep as u32).to_le_bytes());
+        out.extend_from_slice(&(n as u32).to_le_bytes());
+        out.extend_from_slice(&cap[p + 16..p + 16 + keep]);
+        p += 16 + n;
+    }
+    let s = collect(&out, &IngestOptions::default());
+    let by_frame: BTreeMap<u64, &WifiRow> = s.rows.wifi.iter().map(|r| (r.frame_no, r)).collect();
+    let mut beacons = 0;
+    for fr in &s.rows.frames {
+        let Some(r) = by_frame.get(&fr.frame_no) else {
+            continue;
+        };
+        let o = fr.file_offset as usize;
+        let rec = &out[o..o + fr.caplen as usize];
+        check_row_matches_tree(r, rec, 127);
+        let t = decode_frame(127, rec);
+        let last = t.last().expect("test input");
+        assert!(last.label.starts_with("Trailing 4 bytes"), "{}", last.label);
+        beacons += usize::from(r.kind == WifiKind::Beacon);
+    }
+    assert!(beacons > 100);
+}

@@ -95,11 +95,42 @@ pub fn decode(link_type: u32, b: &[u8], nodes: &mut Vec<DecodeNode>) {
             }
         }
     }
-    let fcs = rt.as_ref().is_some_and(Radiotap::has_fcs) && blen >= start + 4;
+    // Ingest drops the FCS only when the record is complete (caplen ==
+    // wirelen); we get bytes only. A trailing FCS that verifies, or that the
+    // radio flagged as bad, is the FCS of a complete frame. One that does not
+    // verify without the bad-FCS flag is most likely a snapped record: like
+    // ingest, keep those bytes as part of the frame and only point at them.
+    let fcs_flag = rt.as_ref().is_some_and(Radiotap::has_fcs) && blen >= start + 4;
     let bad_fcs = rt.as_ref().is_some_and(Radiotap::bad_fcs);
+    let fcs = fcs_flag && {
+        let body = b.get(start..blen - 4).unwrap_or(&[]);
+        let tail = b.get(blen - 4..).unwrap_or(&[]);
+        bad_fcs || tail == wifi::crc32(body).to_le_bytes()
+    };
     let end = if fcs { blen - 4 } else { blen };
     let frame = b.get(..end).unwrap_or(b);
-    dot11(link_type, b, frame, start, rt.as_ref(), nodes);
+    dot11(
+        link_type,
+        b,
+        frame,
+        start,
+        rt.as_ref(),
+        fcs_flag && !fcs,
+        nodes,
+    );
+    if fcs_flag && !fcs {
+        nodes.push(warn(
+            plain(
+                "Trailing 4 bytes",
+                None,
+                format!("0x{}", hex(b.get(blen - 4..).unwrap_or(&[]))),
+                blen - 4,
+                4,
+                blen,
+            ),
+            "FCS flag set but the checksum does not match: frame may be truncated (decoded as payload)",
+        ));
+    }
     if fcs {
         let mut n = plain(
             "Frame check sequence",
@@ -266,6 +297,7 @@ fn dot11(
     b: &[u8],
     start: usize,
     rt: Option<&Radiotap>,
+    record_truncated: bool,
     nodes: &mut Vec<DecodeNode>,
 ) {
     let blen = b.len();
@@ -298,7 +330,7 @@ fn dot11(
         return;
     }
     let name = subtype_name(ftype, subtype);
-    let Some(w) = wifi::parse_frame(link_type, whole, false) else {
+    let Some(w) = wifi::parse_frame(link_type, whole, record_truncated) else {
         let mut n = node(format!("IEEE 802.11 {name}"), start, f.len(), blen);
         n.children.push(fc_leaf(start, ftype, subtype, blen));
         n.children
@@ -786,7 +818,7 @@ fn tag_node(id: u8, at: usize, data: &[u8], abs: usize, blen: usize) -> DecodeNo
             let shown = if ssid.is_empty() {
                 "(hidden)".to_string()
             } else {
-                format!("\"{ssid}\"")
+                wifi::quote_ssid(&ssid)
             };
             let mut n = valued(
                 "Tag: SSID parameter set",
@@ -903,7 +935,8 @@ mod tests {
         v.extend_from_slice(&[0, 4, b'H', b'o', b'm', b'e', 3, 1, 6]);
         v.extend_from_slice(&[48, 20, 1, 0, 0, 0x0f, 0xac, 4, 1, 0, 0, 0x0f, 0xac, 4, 1, 0]);
         v.extend_from_slice(&[0, 0x0f, 0xac, 2, 0, 0]);
-        v.extend_from_slice(&[1, 2, 3, 4]); // FCS
+        let fcs = wifi::crc32(&v[15..]);
+        v.extend_from_slice(&fcs.to_le_bytes());
         v
     }
 
@@ -991,5 +1024,72 @@ mod tests {
         let t = decode_frame(127, &b);
         assert!(t[1].warning.as_deref().unwrap_or("").contains("bad FCS"));
         assert!(t.last().expect("test input").warning.is_some());
+    }
+
+    fn labels(t: &[DecodeNode], out: &mut Vec<String>) {
+        for n in t {
+            out.push(n.label.clone());
+            labels(&n.children, out);
+        }
+    }
+
+    /// Security review M4: a `"` in an SSID cannot end the quoted label.
+    #[test]
+    fn ssid_quote_is_escaped_in_label() {
+        let evil = br#"Free" ch 6 wpa3"#;
+        let mut v = beacon();
+        let at = v.iter().position(|&x| x == b'H').expect("test input") - 2;
+        v.truncate(v.len() - 4);
+        let mut b = v[..at].to_vec();
+        b.push(0);
+        b.push(evil.len() as u8);
+        b.extend_from_slice(evil);
+        b.extend_from_slice(&v[at + 2 + 4..]);
+        let fcs = wifi::crc32(&b[15..]);
+        b.extend_from_slice(&fcs.to_le_bytes());
+        let t = decode_frame(127, &b);
+        let mut all = Vec::new();
+        labels(&t, &mut all);
+        assert!(
+            all.contains(&r#"Tag: SSID parameter set: "Free\" ch 6 wpa3""#.to_string()),
+            "{all:?}"
+        );
+        let mut vals = Vec::new();
+        fn values(t: &[DecodeNode], out: &mut Vec<(Option<String>, Option<String>)>) {
+            for n in t {
+                out.push((n.field.clone(), n.value.clone()));
+                values(&n.children, out);
+            }
+        }
+        values(&t, &mut vals);
+        assert!(vals.contains(&(
+            Some(F_WIFI_SSID.to_string()),
+            Some(r#"Free" ch 6 wpa3"#.to_string())
+        )));
+    }
+
+    /// Security review L3: a snapped record's last 4 bytes are not taken as
+    /// the FCS, so the tree parses the frame the way ingest does.
+    #[test]
+    fn snapped_frame_trailing_bytes_are_not_fcs() {
+        let b = beacon();
+        // Complete: FCS verifies and is shown as such, no warning.
+        let t = decode_frame(127, &b);
+        let last = t.last().expect("test input");
+        assert!(last.label.starts_with("Frame check sequence"));
+        assert!(last.warning.is_none());
+        // Snapped by 3 bytes: the trailing 4 bytes are payload.
+        let cut = &b[..b.len() - 3];
+        let t = decode_frame(127, cut);
+        let last = t.last().expect("test input");
+        assert!(last.label.starts_with("Trailing 4 bytes"), "{}", last.label);
+        assert!(last.warning.is_some());
+        let mut all = Vec::new();
+        labels(&t, &mut all);
+        assert!(!all.iter().any(|l| l.starts_with("Frame check sequence")));
+        // The RSN element (whose tail the bogus FCS would have eaten) is
+        // still decoded up to where the bytes end.
+        let w = wifi::parse_frame(127, cut, true).expect("test input");
+        assert_eq!(w.at.end, cut.len());
     }
 }
