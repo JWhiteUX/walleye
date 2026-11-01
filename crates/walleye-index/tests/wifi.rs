@@ -498,6 +498,81 @@ fn access_points_view_matches_the_contract() {
     assert_eq!(one("ap.clients >= 1 and ap.beacons > 1"), vec![AP1]);
 }
 
+/// `ssid`/`channel`/`security` come from beacons when the BSSID beacons, and
+/// from probe responses only when it never does (karma APs answer probes
+/// for SSIDs they do not advertise).
+#[test]
+fn ap_attributes_prefer_beacons_over_probe_responses() {
+    use WifiKind as K;
+    let mut b = B { rows: Vec::new() };
+    b.push(
+        T,
+        K::Beacon,
+        TWIN,
+        BCAST,
+        TWIN,
+        Some(TWIN),
+        Some("Real"),
+        Some("wpa2"),
+        Some(1),
+        None,
+        None,
+    );
+    for i in 1..=3 {
+        b.push(
+            T + i * SEC,
+            K::ProbeResp,
+            TWIN,
+            C1,
+            TWIN,
+            Some(TWIN),
+            Some("Other"),
+            Some("open"),
+            Some(11),
+            None,
+            None,
+        );
+        b.push(
+            T + i * SEC + 1,
+            K::ProbeResp,
+            AP3,
+            C1,
+            AP3,
+            Some(AP3),
+            Some(if i == 1 { "Lure" } else { "Bait" }),
+            Some("owe"),
+            Some(6),
+            None,
+            None,
+        );
+    }
+    let d = TempDir::new("beacon-first");
+    let idx = build(d.path(), &b.rows, 127);
+    let got = aps(&idx, &req(View::WifiAps, ""));
+    let by = |m: &str| got.iter().find(|a| a.bssid == m).expect(m).clone();
+    let t = by(TWIN);
+    assert_eq!(
+        (
+            t.ssid.as_deref(),
+            t.channel,
+            t.security.as_deref(),
+            t.frames
+        ),
+        (Some("Real"), Some(1), Some("wpa2"), 4)
+    );
+    // Never beacons: probe responses decide.
+    let p = by(AP3);
+    assert_eq!(
+        (
+            p.ssid.as_deref(),
+            p.channel,
+            p.security.as_deref(),
+            p.beacons
+        ),
+        (Some("Bait"), Some(6), Some("owe"), 0)
+    );
+}
+
 #[test]
 fn clients_view_matches_the_contract() {
     let d = TempDir::new("clients");

@@ -28,8 +28,10 @@ fn randomized(col: &str) -> String {
 /// `wifi_aps`: one row per BSSID that sent a beacon or probe response.
 ///
 /// - `ssid`, `channel`, `security`: most frequent value over that BSSID's
-///   beacons and probe responses (non-empty SSIDs only); ties go to the
-///   smallest value, so the result is deterministic.
+///   beacons, or over its probe responses only when it never beacons (a
+///   karma AP answers probes for many SSIDs; what it beacons is what it
+///   advertises). Non-empty SSIDs only; ties go to the smallest value, so the
+///   result is deterministic.
 /// - `first_ts`, `last_ts`, `frames`, `first_frame`: over every `wifi` row
 ///   whose `bssid` is this BSSID; `beacons` counts its beacon rows.
 /// - `clients`: distinct unicast `src`/`dst` other than the BSSID in its
@@ -37,8 +39,11 @@ fn randomized(col: &str) -> String {
 /// - `signal_max`: over the AP's own transmissions (`tx = bssid`).
 pub(crate) fn aps_select() -> String {
     format!(
-        "WITH adv AS (SELECT bssid, ssid, channel, security FROM wifi \
+        "WITH all_adv AS (SELECT bssid, kind, ssid, channel, security FROM wifi \
             WHERE kind IN {ADV_KINDS} AND bssid IS NOT NULL), \
+         bcn AS (SELECT DISTINCT bssid FROM all_adv WHERE kind = 'beacon'), \
+         adv AS (SELECT bssid, ssid, channel, security FROM all_adv \
+            WHERE kind = 'beacon' OR bssid NOT IN (SELECT bssid FROM bcn)), \
          ssid_n AS (SELECT bssid, ssid, count(*) AS n FROM adv WHERE ssid <> '' GROUP BY bssid, ssid), \
          chan_n AS (SELECT bssid, channel, count(*) AS n FROM adv WHERE channel IS NOT NULL GROUP BY bssid, channel), \
          sec_n AS (SELECT bssid, security, count(*) AS n FROM adv WHERE security IS NOT NULL GROUP BY bssid, security), \
