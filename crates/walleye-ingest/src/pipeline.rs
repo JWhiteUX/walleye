@@ -15,7 +15,7 @@ use crate::capture::{
 };
 use crate::flow::{FlowTable, FlowTableState};
 use crate::out::Out;
-use crate::packet::parse_packet;
+use crate::packet::{parse_packet, parse_packet_ether};
 use crate::{IngestOptions, Progress};
 
 /// Bump when `SavedState` changes shape; older checkpoints are rejected.
@@ -52,7 +52,27 @@ impl Engine {
         let frame_no = self.frames;
         self.first_ts = Some(self.first_ts.map_or(ts, |t| t.min(ts)));
         self.last_ts = Some(self.last_ts.map_or(ts, |t| t.max(ts)));
-        let (flow_id, direction, tcp_flags, payload_len) = match parse_packet(link_type, data) {
+        // 802.11: one `wifi` row per management/data frame; unprotected
+        // LLC/SNAP data continues into the IP/flow pipeline below. No
+        // per-capture state is kept, so checkpoints need nothing extra.
+        let packet = if walleye_core::is_wifi_link_type(link_type) {
+            let truncated = u64::from(wirelen) > data.len() as u64;
+            match crate::wifi::parse_frame(link_type, data, truncated) {
+                Some(w) => {
+                    self.out
+                        .wifi
+                        .push(crate::wifi::row(&w, ts, frame_no, wirelen));
+                    w.snap.and_then(|(et, off)| {
+                        let end = w.at.end.max(off);
+                        parse_packet_ether(et, data.get(off..end).unwrap_or(&[]))
+                    })
+                }
+                None => None,
+            }
+        } else {
+            parse_packet(link_type, data)
+        };
+        let (flow_id, direction, tcp_flags, payload_len) = match packet {
             Some(p) => {
                 let (id, dir) = self.table.packet(frame_no, ts, &p, &mut self.out);
                 (Some(id), Some(dir), p.tcp.map(|t| t.flags), p.payload_len)
@@ -109,6 +129,7 @@ fn flush(out: &mut Out, tx: &SyncSender<Msg>, force: bool, batch_rows: usize) ->
     table!(http, Http);
     table!(tls, Tls);
     table!(files, Files);
+    table!(wifi, Wifi);
     Ok(())
 }
 

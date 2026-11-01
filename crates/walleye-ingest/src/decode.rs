@@ -41,6 +41,18 @@ pub const DECODE_FIELDS: &[&str] = &[
     F_TLS_ISSUER,
     F_TLS_SERIAL,
     F_TLS_SELF_SIGNED,
+    crate::decode_wifi::F_WIFI_SRC,
+    crate::decode_wifi::F_WIFI_DST,
+    crate::decode_wifi::F_WIFI_TX,
+    crate::decode_wifi::F_WIFI_BSSID,
+    crate::decode_wifi::F_WIFI_SSID,
+    crate::decode_wifi::F_WIFI_SECURITY,
+    crate::decode_wifi::F_WIFI_CHANNEL,
+    crate::decode_wifi::F_WIFI_FREQ,
+    crate::decode_wifi::F_WIFI_SIGNAL,
+    crate::decode_wifi::F_WIFI_REASON,
+    crate::decode_wifi::F_WIFI_PROTECTED,
+    crate::decode_wifi::F_WIFI_RETRY,
 ];
 const F_SRC_IP: &str = "src_ip";
 const F_DST_IP: &str = "dst_ip";
@@ -72,14 +84,14 @@ const F_TLS_SELF_SIGNED: &str = "tls.cert_self_signed";
 const MAX_TLS_RECORDS: usize = 16;
 const MAX_LIST: usize = 64;
 
-fn range(start: usize, len: usize) -> Option<ByteRange> {
+pub(crate) fn range(start: usize, len: usize) -> Option<ByteRange> {
     Some(ByteRange {
         start: u32::try_from(start).ok()?,
         len: u32::try_from(len).ok()?,
     })
 }
 
-fn tree(label: impl Into<String>, start: usize, len: usize) -> DecodeNode {
+pub(crate) fn tree(label: impl Into<String>, start: usize, len: usize) -> DecodeNode {
     DecodeNode {
         label: label.into(),
         field: None,
@@ -90,7 +102,13 @@ fn tree(label: impl Into<String>, start: usize, len: usize) -> DecodeNode {
     }
 }
 
-fn leaf(name: &str, field: Option<&str>, value: String, start: usize, len: usize) -> DecodeNode {
+pub(crate) fn leaf(
+    name: &str,
+    field: Option<&str>,
+    value: String,
+    start: usize,
+    len: usize,
+) -> DecodeNode {
     DecodeNode {
         label: format!("{name}: {value}"),
         field: field.map(str::to_string),
@@ -101,7 +119,7 @@ fn leaf(name: &str, field: Option<&str>, value: String, start: usize, len: usize
     }
 }
 
-fn warn(mut n: DecodeNode, w: &str) -> DecodeNode {
+pub(crate) fn warn(mut n: DecodeNode, w: &str) -> DecodeNode {
     n.warning = Some(w.to_string());
     n
 }
@@ -191,6 +209,9 @@ pub fn decode_frame(link_type: u32, bytes: &[u8]) -> Vec<DecodeNode> {
             nodes.push(n);
             ethertype(proto, bytes, 20, &mut nodes);
         }
+        walleye_core::LINKTYPE_IEEE802_11 | walleye_core::LINKTYPE_IEEE802_11_RADIOTAP => {
+            crate::decode_wifi::decode(link_type, bytes, &mut nodes)
+        }
         other => nodes.push(warn(
             tree(format!("Link type {other}"), 0, bytes.len()),
             "link type not decoded",
@@ -234,7 +255,7 @@ fn ethernet(b: &[u8], nodes: &mut Vec<DecodeNode>) {
     ethertype(ty, b, off, nodes);
 }
 
-fn ethertype(ty: u16, b: &[u8], off: usize, nodes: &mut Vec<DecodeNode>) {
+pub(crate) fn ethertype(ty: u16, b: &[u8], off: usize, nodes: &mut Vec<DecodeNode>) {
     match ty {
         0x0800 => ipv4(b, off, nodes),
         0x86dd => ipv6(b, off, nodes),

@@ -184,6 +184,78 @@ def frames():
     return t
 
 
+# ---- 802.11 (synthetic addresses only) --------------------------------------
+
+AP = bytes([0x02, 0x00, 0x5e, 0x00, 0x00, 0x01])
+STA = bytes([0x02, 0x00, 0x5e, 0x00, 0x00, 0x02])
+GW = bytes([0x02, 0x00, 0x5e, 0x00, 0x00, 0x03])
+BCAST = b"\xff" * 6
+
+
+def radiotap(flags=0x10, freq=2437, signal=-50, tsft=True):
+    """TSFT + Flags + Rate + Channel + dBm signal (present 0x2f), or without
+    TSFT (0x2e) so Channel needs a pad byte."""
+    if tsft:
+        body = struct.pack("<QBBHHb", 123456, flags, 2, freq, 0x00A0, signal)
+        return struct.pack("<BBHI", 0, 0, 8 + len(body), 0x2F) + body
+    body = struct.pack("<BBHHb", flags, 2, freq, 0x00A0, signal)
+    return struct.pack("<BBHI", 0, 0, 8 + len(body), 0x2E) + body
+
+
+def dot11(fc0, fc1, a1, a2, a3, seq=1, a4=None, qos=None):
+    h = bytes([fc0, fc1]) + b"\0\0" + a1 + a2 + a3 + struct.pack("<H", seq << 4)
+    if a4 is not None:
+        h += a4
+    if qos is not None:
+        h += struct.pack("<H", qos)
+    return h
+
+
+def tag(i, data):
+    return bytes([i, len(data)]) + data
+
+
+def rsn(akms):
+    r = b"\x01\x00\x00\x0f\xac\x04\x01\x00\x00\x0f\xac\x04" + struct.pack("<H", len(akms))
+    for a in akms:
+        r += b"\x00\x0f\xac" + bytes([a])
+    return tag(48, r + b"\x00\x00")
+
+
+def beacon(ssid=b"SeedNet", akms=(2,)):
+    body = struct.pack("<QHH", 0, 100, 0x0431) + tag(0, ssid) + tag(1, b"\x82\x84\x8b\x96")
+    body += tag(3, b"\x06") + tag(5, b"\x00\x01\x00\x00") + (rsn(list(akms)) if akms else b"")
+    return dot11(0x80, 0, BCAST, AP, AP) + body
+
+
+def wifi_frames():
+    """(name, 802.11 frame) pairs."""
+    llc = lambda et: b"\xaa\xaa\x03\x00\x00\x00" + struct.pack("!H", et)
+    dns = ipv4(A, B, 17, udp(53000, 53, dns_query()))
+    eapol = b"\x02\x03\x00\x5f\x02\x00\x8a\x00\x10" + bytes(8 + 32 + 16 + 8 + 8 + 16) + b"\x00\x00"
+    ccmp = b"\x01\x00\x00\x20\x00\x00\x00\x00" + bytes(40) + bytes(8)
+    return [
+        ("beacon-wpa2", beacon()),
+        ("beacon-wpa3", beacon(b"SeedSAE", (8,))),
+        ("beacon-open-hidden", beacon(b"\0\0\0\0", ())),
+        ("probe-req", dot11(0x40, 0, BCAST, STA, BCAST) + tag(0, b"SeedNet") + tag(1, b"\x82\x84")),
+        ("deauth", dot11(0xC0, 0, STA, AP, AP) + b"\x07\x00"),
+        ("auth", dot11(0xB0, 0, AP, STA, AP) + b"\x00\x00\x01\x00\x00\x00"),
+        ("qos-data-dns", dot11(0x88, 0x01, AP, STA, GW, qos=0) + llc(0x0800) + dns),
+        ("eapol-m1", dot11(0x88, 0x02, STA, AP, AP, qos=7) + llc(0x888E) + eapol),
+        ("protected-data", dot11(0x88, 0x41, AP, STA, GW, qos=0) + ccmp),
+        ("wds-data", dot11(0x08, 0x03, AP, GW, BCAST, a4=STA) + llc(0x0800) + dns),
+        ("ack", b"\xd4\x00\x00\x00" + STA),
+        ("awdl-data", dot11(0x08, 0, BCAST, STA, AP) + b"\xaa\xaa\x03\x00\x17\xf2\x08\x00"
+            + b"\x03\x04\x05\x00\x00\x00\x08\x00" + dns),
+    ]
+
+
+def fcs(frame):
+    import zlib
+    return struct.pack("<I", zlib.crc32(frame) & 0xFFFFFFFF)
+
+
 def pcap(pkts, linktype=1, nano=False):
     magic = 0xA1B23C4D if nano else 0xA1B2C3D4
     out = struct.pack("<IHHiIII", magic, 2, 4, 0, 0, 65535, linktype)
@@ -233,6 +305,21 @@ def main():
     put("ingest_decode_frame", "eth-ipv6.bin", struct.pack("<I", 0) + eth(v6, 0x86DD))
     vlan = b"\x02\x00\x00\x00\x00\x01\x02\x00\x00\x00\x00\x02\x81\x00\x00\x64\x08\x00" + fr[0][14:]
     put("ingest_decode_frame", "eth-vlan.bin", struct.pack("<I", 0) + vlan)
+    # 802.11: selector 8 = link type 105 (bare 802.11), 9 = 127 (radiotap).
+    wf = wifi_frames()
+    for nm, f in wf:
+        put("ingest_decode_frame", f"radiotap-{nm}.bin", struct.pack("<I", 9) + radiotap() + f + fcs(f))
+    put("ingest_decode_frame", "dot11-qos-data-dns.bin", struct.pack("<I", 8) + wf[6][1])
+    put("ingest_decode_frame", "radiotap-nofcs-pad.bin",
+        struct.pack("<I", 9) + radiotap(flags=0, tsft=False) + wf[0][1])
+    put("ingest_decode_frame", "radiotap-badfcs.bin",
+        struct.pack("<I", 9) + radiotap(flags=0x50) + wf[4][1] + b"\0\0\0\0")
+    # Extended present bitmap (two words) before the fields.
+    ext = struct.pack("<BBHII", 0, 0, 12 + 9, 0x8000002E, 0x00000020) + struct.pack("<BBHHbb", 0x10, 2, 2412, 0xA0, -60, -61)
+    ext = ext[:2] + struct.pack("<H", len(ext)) + ext[4:]
+    put("ingest_decode_frame", "radiotap-ext-present.bin", struct.pack("<I", 9) + ext + wf[3][1] + fcs(wf[3][1]))
+    put("ingest_read_capture", "radiotap.pcap.bin",
+        pcap([radiotap() + f + fcs(f) for _, f in wf], linktype=127))
 
     # ingest_dns: first byte bit 0 = TCP framing.
     for nm, m in [("query", dns_query()), ("response", dns_response()), ("nxdomain", dns_nxdomain()),

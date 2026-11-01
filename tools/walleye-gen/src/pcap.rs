@@ -19,6 +19,11 @@ pub struct PcapWriter<W: Write> {
 
 impl<W: Write> PcapWriter<W> {
     pub fn new(out: W) -> io::Result<Self> {
+        Self::with_link_type(out, LINKTYPE_ETHERNET)
+    }
+
+    /// A writer for another link type (127 = 802.11 + radiotap).
+    pub fn with_link_type(out: W, link_type: u32) -> io::Result<Self> {
         let mut w = PcapWriter {
             out,
             hasher: Sha256::new(),
@@ -33,7 +38,7 @@ impl<W: Write> PcapWriter<W> {
         hdr.extend_from_slice(&0i32.to_le_bytes()); // thiszone
         hdr.extend_from_slice(&0u32.to_le_bytes()); // sigfigs
         hdr.extend_from_slice(&SNAPLEN.to_le_bytes());
-        hdr.extend_from_slice(&LINKTYPE_ETHERNET.to_le_bytes());
+        hdr.extend_from_slice(&link_type.to_le_bytes());
         w.put(&hdr)?;
         Ok(w)
     }
