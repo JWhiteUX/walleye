@@ -31,7 +31,7 @@ import type { WifiApRow } from "./bindings/WifiApRow";
 import type { WifiClientRow } from "./bindings/WifiClientRow";
 import type { WifiKind } from "./bindings/WifiKind";
 import type { WifiRow } from "./bindings/WifiRow";
-import { isRandomizedMac } from "./wifi";
+import { isRandomizedMac, quoteSsid } from "./wifi";
 
 export const BROADCAST = "ff:ff:ff:ff:ff:ff";
 const EVIDENCE_CAP = 200;
@@ -660,7 +660,7 @@ function findingsFor(rows: WifiRow[]): Finding[] {
           value: karmaSsids.size,
           unit: "count",
           weight: 50,
-          explanation: `${ATTACKERS.karma} answered probe requests for ${karmaSsids.size} different SSIDs, including "${[...karmaSsids].slice(0, 3).join('", "')}"`,
+          explanation: `${ATTACKERS.karma} answered probe requests for ${karmaSsids.size} different SSIDs, including ${[...karmaSsids].slice(0, 3).map((x) => qs(x ?? "")).join(", ")}`,
           attack_technique: "T1557",
           evidence: ev(karmaResp.map((w) => w.frame_no)),
         },
@@ -671,7 +671,9 @@ function findingsFor(rows: WifiRow[]): Finding[] {
 
 // ------------------------------------------------------- frame summaries
 
-const q = (s: string | null) => (s ? `"${s}"` : "(hidden)");
+/** Quote an SSID for a summary, escaping `\` and `"` so it cannot close the quotes early. */
+const qs = quoteSsid;
+const q = (s: string | null) => (s ? qs(s) : "(hidden)");
 
 export function wifiSummary(f: WifiRow): string {
   const a = `${f.src ?? "?"} → ${f.dst ?? "?"}`;
@@ -679,7 +681,7 @@ export function wifiSummary(f: WifiRow): string {
     case "beacon":
       return `Beacon ${q(f.ssid)} ch ${f.channel ?? "?"} ${f.security ?? ""}`.trim();
     case "probe_req":
-      return `Probe request ${f.ssid ? `"${f.ssid}"` : "(wildcard)"} from ${f.src ?? "?"}`;
+      return `Probe request ${f.ssid ? qs(f.ssid) : "(wildcard)"} from ${f.src ?? "?"}`;
     case "probe_resp":
       return `Probe response ${q(f.ssid)} ${a}`;
     case "auth":

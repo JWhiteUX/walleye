@@ -61,8 +61,9 @@ export function evidenceLabel(e: Evidence): string {
 export function ssidContext(f: Pick<Finding, "entity_type" | "reasons">): string | null {
   if (f.entity_type !== "device") return null;
   for (const r of f.reasons) {
-    const m = /"([^"]{1,32})"/.exec(r.explanation);
-    if (m) return m[1]!;
+    // A quoted run, honouring backslash escapes (`\"`, `\\`) inside it.
+    const m = /"((?:[^"\\]|\\.){1,64})"/.exec(r.explanation);
+    if (m) return m[1]!.replace(/\\(.)/g, "$1");
   }
   return null;
 }

@@ -49,6 +49,15 @@ export function ssidText(ssid: string | null | undefined, kind?: string): { text
   return { text: ssid, placeholder: false };
 }
 
+/**
+ * An SSID in double quotes for display inside other text, with `\` and `"`
+ * backslash-escaped so a quote inside the name can't close it early and forge
+ * what follows. Pass it through `visible()` first (or after: escapes are ASCII).
+ */
+export function quoteSsid(s: string): string {
+  return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
 const KIND_LABEL: Record<string, string> = {
   beacon: "Beacon",
   probe_req: "Probe request",

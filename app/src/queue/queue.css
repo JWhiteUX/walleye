@@ -88,3 +88,5 @@
   font-size: 12px;
 }
 .wl-q-details .wl-q-evidence { color: var(--wl-accent); background: transparent; border-color: var(--wl-accent); }
+/* SSID context of a device finding: boxed, so its text can't blend into the line. */
+.wl-q-ssid { border: 1px solid var(--wl-border); border-radius: 3px; padding: 0 3px; white-space: pre-wrap; }

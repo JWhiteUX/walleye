@@ -8,7 +8,7 @@ import { api } from "../shared/ipc";
 import { resetMock } from "../shared/mock";
 import { useSelection } from "../shared/selection";
 import { useSession } from "../shared/session";
-import { COLUMNS, wifiRowTarget } from "./columns";
+import { COLUMNS, LIST_CELL_MAX, listCell, wifiRowTarget } from "./columns";
 import { composePredicate } from "./predicates";
 import { asTableView, useTableStore, visibleViews, WIFI_VIEWS, WIRED_VIEWS } from "./store";
 import { SessionTable } from ".";
@@ -59,10 +59,28 @@ describe("Wi-Fi columns", () => {
     expect(cell("wifi_aps", "beacons", AP).text).toBe("360");
     expect(cell("wifi_aps", "first_ts", AP).text).toMatch(/^2026-03-12 /);
     const cl: Partial<WifiClientRow> = { mac: "4a:5e:00:53:21:9c", probed_ssids: ["Airport_Free", "Hotel-Lobby"], bssids: ["00:00:5e:00:53:01"] };
-    expect(cell("wifi_clients", "probed_ssids", cl).text).toBe("Airport_Free, Hotel-Lobby");
+    expect(cell("wifi_clients", "probed_ssids", cl).text).toBe('"Airport_Free", "Hotel-Lobby"');
     expect(cell("wifi_clients", "bssids", cl).text).toBe("00:00:5e:00:53:01");
     expect(cell("wifi", "kind", { kind: "probe_req" }).text).toBe("Probe request");
     expect(cell("wifi", "protected", { protected: true }).text).toBe("yes");
+  });
+
+  it("caps list cells (probed SSIDs, access points) so a hostile row can't build a huge cell", () => {
+    const ssids = Array.from({ length: 64 }, (_, i) => `net-${i}`);
+    const t = cell("wifi_clients", "probed_ssids", { probed_ssids: ssids }).text;
+    expect(t).toBe(`${ssids.slice(0, LIST_CELL_MAX).map((s) => `"${s}"`).join(", ")} … 56 more`);
+    const aps = Array.from({ length: 20 }, (_, i) => `02:00:5e:00:53:${i.toString(16).padStart(2, "0")}`);
+    const a = cell("wifi_clients", "bssids", { bssids: aps }).text;
+    expect(a.endsWith(" … 12 more")).toBe(true);
+    expect(a.split(", ")).toHaveLength(LIST_CELL_MAX);
+    // Long items are clipped too; non-arrays render empty.
+    expect(listCell(["x".repeat(500)], (s) => s)).toBe(`${"x".repeat(64)}…`);
+    expect(listCell("nope", (s) => s)).toBe("");
+  });
+
+  it("quotes probed SSIDs with escapes, so a quote or comma inside one can't forge another", () => {
+    const t = cell("wifi_clients", "probed_ssids", { probed_ssids: ['a", "Bank', "b\\c", "Corp\u{E0041}"] }).text;
+    expect(t).toBe('"a\\", \\"Bank", "b\\\\c", "Corp\\\\u{e0041}"');
   });
 
   it("every Wi-Fi column filter names a field of its own view", async () => {
