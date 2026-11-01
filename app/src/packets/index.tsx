@@ -10,7 +10,7 @@ import { formatTs } from "../shared/format";
 import { WalleyeError, api } from "../shared/ipc";
 import { useSelection } from "../shared/selection";
 import { useSession } from "../shared/session";
-import { isWifiCapture } from "../shared/wifi";
+import { useCaptureKind } from "../shared/captureKind";
 import { DecodeTree } from "./DecodeTree";
 import { FrameList } from "./FrameList";
 import { ancestorIds, deepestNodeAt, effectiveRange, flattenTree, hex2, parseHex, truncationNote, type NodeId } from "./hex";
@@ -53,7 +53,7 @@ export function PacketPane() {
   const frameNo = useSelection((s) => s.frame_no);
   const selectFrame = useSelection((s) => s.selectFrame);
   const [status, setStatus] = useState("");
-  const wifi = isWifiCapture(session?.capture);
+  const wifi = useCaptureKind().wifi === true;
 
   // Flow frames when a flow is selected, else the focused device's frames.
   const source = useMemo<FrameSource>(

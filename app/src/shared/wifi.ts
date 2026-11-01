@@ -1,10 +1,14 @@
 // 802.11 display helpers shared by the table, packet pane, timeline and queue
 // (CONTRACTS §11). Pure.
-import type { CaptureRow } from "./bindings/CaptureRow";
-
-/** LINKTYPE_IEEE802_11 (105) and LINKTYPE_IEEE802_11_RADIOTAP (127). */
+/**
+ * LINKTYPE_IEEE802_11 (105) and LINKTYPE_IEEE802_11_RADIOTAP (127). Only a fast
+ * path: `capture.link_type` is the first interface's; whether a capture has
+ * 802.11 rows is decided from data (./captureKind.ts).
+ */
 export const isWifiLinkType = (lt: number | null | undefined): boolean => lt === 105 || lt === 127;
-export const isWifiCapture = (c: Pick<CaptureRow, "link_type"> | null | undefined): boolean => !!c && isWifiLinkType(c.link_type);
+
+/** Most frames `device_frames` returns. Mirrors walleye_core::backend::DEVICE_FRAMES_CAP. */
+export const DEVICE_FRAMES_CAP = 10_000;
 
 const MAC = /^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$/i;
 export const isMac = (s: string): boolean => MAC.test(s);
@@ -50,12 +54,41 @@ export function ssidText(ssid: string | null | undefined, kind?: string): { text
 }
 
 /**
- * An SSID in double quotes for display inside other text, with `\` and `"`
- * backslash-escaped so a quote inside the name can't close it early and forge
- * what follows. Pass it through `visible()` first (or after: escapes are ASCII).
+ * An SSID in double quotes for display inside other text, escaping ONLY `"`
+ * as `\"`, exactly like walleye_core::text::quote_ssid. Stored SSIDs already
+ * have `\` escaped (as `\u{5c}`, CONTRACTS §11.1), so `\"` is unambiguous and
+ * one SSID reads the same in the table, packet summaries and findings.
  */
 export function quoteSsid(s: string): string {
-  return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  return `"${s.replace(/"/g, '\\"')}"`;
+}
+
+/** Longest a quoted stored SSID can be: 32 raw bytes, each at most `\u{xxxxx}`-ish. */
+export const QUOTED_SSID_MAX = 256;
+
+/**
+ * Parse a `quoteSsid` string that starts at `text[start]` (which must be `"`):
+ * `\"` is a quote, any other `\` is literal (stored SSIDs escape `\` as
+ * `\u{5c}`). Returns the SSID and the index after the closing quote, or null
+ * when there is no closing quote within `QUOTED_SSID_MAX` characters. Never
+ * guesses: the caller shows nothing on null.
+ */
+export function parseQuotedSsid(text: string, start: number): { ssid: string; end: number } | null {
+  if (text[start] !== '"') return null;
+  let out = "";
+  const limit = Math.min(text.length, start + 1 + QUOTED_SSID_MAX);
+  for (let i = start + 1; i < limit; i++) {
+    const c = text[i]!;
+    if (c === "\\" && text[i + 1] === '"') {
+      out += '"';
+      i++;
+    } else if (c === '"') {
+      return { ssid: out, end: i + 1 };
+    } else {
+      out += c;
+    }
+  }
+  return null;
 }
 
 const KIND_LABEL: Record<string, string> = {

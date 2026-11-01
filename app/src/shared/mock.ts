@@ -47,6 +47,7 @@ import type { View } from "./bindings/View";
 import type { WifiRow } from "./bindings/WifiRow";
 import { FILTER_FIELDS, FILTER_KEYWORDS, FILTER_OPERATORS, type FilterField } from "./filterFields";
 import { buildPacket, toFrameRef, wifiDataset, type WifiDataset } from "./mockWifi";
+import { DEVICE_FRAMES_CAP } from "./wifi";
 
 interface Dataset {
   capture: CaptureRow;
@@ -448,7 +449,7 @@ function deviceTimeline(req: TimelineRequest, w: WifiDataset): Lanes {
   return { bucket_ms: bucketMs, range, lane_kind: "device", lanes };
 }
 
-const DEVICE_FRAMES_CAP = 10_000;
+
 function deviceFrames(mac: string, tr: { start: number; end: number } | null): FrameRef[] {
   requireOpen();
   if (!MAC_RE.test(mac)) throw err("invalid_argument", "mac: not a MAC address");

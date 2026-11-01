@@ -53,7 +53,7 @@ export function defang(v: string): string {
  *   bidi controls, zero-width characters, BOM, soft hyphen, tag characters\u2026
  * - the whole tag block U+E0000\u2013E007F (including unassigned slots)
  * - U+2060\u2013206F (including the unassigned U+2065)
- * - Hangul fillers U+115F, U+1160, U+3164, U+FFA0 (render as blank)
+ * - Hangul fillers U+115F, U+1160, U+3164, U+FFA0 and Braille blank U+2800 (render as blank)
  * - combining grapheme joiner U+034F
  * - variation selectors U+FE00\u2013FE0F, U+E0100\u2013E01EF
  * - Mongolian free variation selectors U+180B\u2013180D (and U+180E, Cf)

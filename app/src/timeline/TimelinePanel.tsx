@@ -19,7 +19,8 @@ import { api, WalleyeError } from "../shared/ipc";
 import { useSelection } from "../shared/selection";
 import { useSession } from "../shared/session";
 import { getTimelineSnapshot, registerTimelineSnapshot } from "../shared/snapshots";
-import { isWifiCapture, RANDOMIZED_HELP } from "../shared/wifi";
+import { useCaptureKind } from "../shared/captureKind";
+import { RANDOMIZED_HELP } from "../shared/wifi";
 import { cursorStep, inRange, keyBrush, MIN_BRUSH_PX, normalizeBrush } from "./brush";
 import { drawTimeline, readTheme, type Scene, type Theme } from "./draw";
 import { createLatestRunner } from "./latest";
@@ -77,6 +78,9 @@ function TimelineView() {
   const device = useSelection((s) => s.device);
   const selectDevice = useSelection((s) => s.selectDevice);
   const capture = useSession((s) => s.session?.capture ?? null);
+  // Only a guess for the label width before the first answer; once lanes
+  // arrive, `lanes.lane_kind` decides.
+  const captureWifi = useCaptureKind().wifi === true;
 
   const [load, setLoad] = useState<LoadState | null>(null);
   const [dataExtent, setDataExtent] = useState<TimeRange | null>(null);
@@ -107,7 +111,7 @@ function TimelineView() {
     [extent, userView],
   );
   // Device lanes (802.11) are keyed by MAC and draw the Wi-Fi frame classes.
-  const laneKind: LaneKind = (load?.kind === "ok" ? load.lanes.lane_kind : null) ?? (isWifiCapture(capture) ? "device" : "host");
+  const laneKind: LaneKind = (load?.kind === "ok" ? load.lanes.lane_kind : null) ?? (captureWifi ? "device" : "host");
   const isDevice = laneKind === "device";
   const kinds = useMemo(() => kindsFor(laneKind), [laneKind]);
   const lw = labelWidth(laneKind);

@@ -1,6 +1,7 @@
 // Display helpers for the suspicion queue. Pure; see format.test.ts.
 import type { Evidence } from "../shared/bindings/Evidence";
 import type { Finding } from "../shared/bindings/Finding";
+import { parseQuotedSsid } from "../shared/wifi";
 import type { Verdict } from "../shared/bindings/Verdict";
 
 export const VERDICTS: { value: Verdict; label: string; key: string }[] = [
@@ -61,9 +62,12 @@ export function evidenceLabel(e: Evidence): string {
 export function ssidContext(f: Pick<Finding, "entity_type" | "reasons">): string | null {
   if (f.entity_type !== "device") return null;
   for (const r of f.reasons) {
-    // A quoted run, honouring backslash escapes (`\"`, `\\`) inside it.
-    const m = /"((?:[^"\\]|\\.){1,64})"/.exec(r.explanation);
-    if (m) return m[1]!.replace(/\\(.)/g, "$1");
+    // The explanation templates put only MACs, numbers and words before the
+    // first SSID, so the first `"` opens it. Parse from there (honouring `\"`);
+    // never search further, which could start inside a crafted SSID.
+    const at = r.explanation.indexOf('"');
+    if (at < 0) continue;
+    return parseQuotedSsid(r.explanation, at)?.ssid ?? null;
   }
   return null;
 }
