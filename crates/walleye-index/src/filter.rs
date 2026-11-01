@@ -76,28 +76,36 @@ pub enum Expr {
     Or(Vec<Expr>),
     Not(Box<Expr>),
     Cmp(Cmp),
+    /// `mac X` (CONTRACTS §11.2): any address column of the queried 802.11
+    /// view equals X. Which columns depends on the view, so it resolves at
+    /// compile time. `value` is the canonical lowercase MAC (`Lit::Str`).
+    Mac {
+        value: Lit,
+        span: Span,
+    },
 }
 
 impl Expr {
     /// Every literal in the tree (for tests and audits).
     pub fn literals(&self) -> Vec<&Lit> {
         let mut out = Vec::new();
-        self.walk(&mut |c| out.extend(c.values.iter()));
+        self.collect_literals(&mut out);
         out
     }
 
-    fn walk<'a>(&'a self, f: &mut dyn FnMut(&'a Cmp)) {
+    fn collect_literals<'a>(&'a self, out: &mut Vec<&'a Lit>) {
         match self {
             Expr::True => {}
-            Expr::And(v) | Expr::Or(v) => v.iter().for_each(|e| e.walk(f)),
-            Expr::Not(e) => e.walk(f),
-            Expr::Cmp(c) => f(c),
+            Expr::And(v) | Expr::Or(v) => v.iter().for_each(|e| e.collect_literals(out)),
+            Expr::Not(e) => e.collect_literals(out),
+            Expr::Cmp(c) => out.extend(c.values.iter()),
+            Expr::Mac { value, .. } => out.push(value),
         }
     }
 
     fn walk_mut(&mut self, f: &mut dyn FnMut(&mut Cmp) -> ApiResult<()>) -> ApiResult<()> {
         match self {
-            Expr::True => Ok(()),
+            Expr::True | Expr::Mac { .. } => Ok(()),
             Expr::And(v) | Expr::Or(v) => v.iter_mut().try_for_each(|e| e.walk_mut(f)),
             Expr::Not(e) => e.walk_mut(f),
             Expr::Cmp(c) => f(c),
@@ -344,13 +352,16 @@ pub fn fuzz_parse_compile(text: &str) {
     }
 }
 
-pub const ALL_VIEWS: [View; 6] = [
+pub const ALL_VIEWS: [View; 9] = [
     View::Flows,
     View::Dns,
     View::Http,
     View::Tls,
     View::Files,
     View::Frames,
+    View::Wifi,
+    View::WifiAps,
+    View::WifiClients,
 ];
 
 struct Parser {
@@ -485,6 +496,7 @@ impl Parser {
                     )),
                     "host" | "src" | "dst" => self.shorthand_ip(&lower, t.span),
                     "port" => self.shorthand_port(t.span),
+                    "mac" => self.shorthand_mac(t.span),
                     "dns" | "http" | "tls" | "tcp" | "udp" | "icmp" if !self.next_is_op() => {
                         self.term(t.span)?;
                         let (name, lit) = match lower.as_str() {
@@ -576,6 +588,29 @@ impl Parser {
             }))
         };
         Ok(Expr::Or(vec![mk("src_port")?, mk("dst_port")?]))
+    }
+
+    /// `mac X`: X is a bare (`aa:bb:cc:dd:ee:ff`, one word token) or quoted
+    /// MAC; stored lowercase.
+    fn shorthand_mac(&mut self, kspan: Span) -> ApiResult<Expr> {
+        self.term(kspan)?;
+        let Some(v) = self.bump() else {
+            return Err(self.eof_err("expected a MAC address after `mac`"));
+        };
+        let text = match &v.tok {
+            Tok::Word(w) | Tok::Str(w) => w.as_str(),
+            _ => "",
+        };
+        let mac = walleye_core::mac::parse_mac(text).ok_or_else(|| {
+            ApiError::invalid_filter(
+                "expected a MAC address after `mac`, e.g. aa:bb:cc:dd:ee:ff",
+                v.span,
+            )
+        })?;
+        Ok(Expr::Mac {
+            value: Lit::Str(mac),
+            span: span(kspan.start as usize, v.span.end as usize),
+        })
     }
 
     fn comparison(&mut self, name: String, fspan: Span) -> ApiResult<Expr> {
@@ -1041,7 +1076,39 @@ impl Compiler {
                 out.push_str(", FALSE))");
             }
             Expr::Cmp(c) => self.cmp(c, out)?,
+            Expr::Mac { value, span } => self.mac(value, *span, out)?,
         }
+        Ok(())
+    }
+
+    /// `mac X` on the queried view: `src`/`dst`/`tx`/`bssid` on `wifi`,
+    /// `bssid` on `wifi_aps`, `mac` on `wifi_clients`.
+    fn mac(&mut self, value: &Lit, at: Span, out: &mut String) -> ApiResult<()> {
+        let names: &[&str] = match self.view {
+            Table::Wifi => &["wifi.src", "wifi.dst", "wifi.tx", "wifi.bssid"],
+            Table::WifiAps => &["ap.bssid"],
+            Table::WifiClients => &["client.mac"],
+            _ => {
+                return Err(ApiError::invalid_filter(
+                    "`mac` only applies on the 802.11 views (Wi-Fi frames, access points, clients)",
+                    at,
+                ));
+            }
+        };
+        out.push('(');
+        for (i, n) in names.iter().enumerate() {
+            if i > 0 {
+                out.push_str(" OR ");
+            }
+            let c = Cmp {
+                field: reg(n)?,
+                op: Op::Eq,
+                values: vec![value.clone()],
+                span: at,
+            };
+            self.pred(&c, out)?;
+        }
+        out.push(')');
         Ok(())
     }
 
@@ -1344,6 +1411,8 @@ pub enum CompletionKind {
     Host,
     /// After `port`.
     Port,
+    /// After `mac`: MAC addresses seen in `wifi`.
+    Mac,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1407,6 +1476,7 @@ pub fn completion_context(partial: &str, cursor_pos: u32) -> Completion {
             CompletionKind::Host
         }
         Some(Tok::Word(w)) if w.eq_ignore_ascii_case("port") => CompletionKind::Port,
+        Some(Tok::Word(w)) if w.eq_ignore_ascii_case("mac") => CompletionKind::Mac,
         Some(Tok::Op(_)) => match word_of(prev).and_then(|w| fields::field(&w)) {
             Some(f) => CompletionKind::Value(f),
             None => CompletionKind::Term,
@@ -1493,17 +1563,26 @@ pub(crate) fn static_suggestions(ctx: &Completion) -> Vec<walleye_core::ipc::Sug
             }
         }
         CompletionKind::Value(f) => {
+            let kinds: Vec<&str>;
             let fixed: &[&str] = match (f.ty, f.name) {
                 (FieldType::Bool, _) => &["true", "false"],
                 (FieldType::Proto, _) => &["tcp", "udp", "icmp", "icmp6"],
                 (_, "app_proto") => &["dns", "http", "tls"],
+                (_, "wifi.kind") => {
+                    kinds = walleye_core::WifiKind::ALL
+                        .iter()
+                        .map(|k| k.as_str())
+                        .collect();
+                    &kinds
+                }
+                (_, "wifi.security" | "ap.security") => &WIFI_SECURITY,
                 _ => &[],
             };
             for v in fixed.iter().filter(|v| v.starts_with(&w)) {
                 out.push(mk(v, v, K::Value, Some(f.name)));
             }
         }
-        CompletionKind::Host | CompletionKind::Port => {}
+        CompletionKind::Host | CompletionKind::Port | CompletionKind::Mac => {}
         CompletionKind::Term => {
             if ctx.after_term {
                 for k in ["and", "or"].iter().filter(|k| k.starts_with(&w)) {
@@ -1525,6 +1604,9 @@ pub(crate) fn static_suggestions(ctx: &Completion) -> Vec<walleye_core::ipc::Sug
     }
     out
 }
+
+/// `security` values ingest writes (CONTRACTS §11.1).
+const WIFI_SECURITY: [&str; 7] = ["open", "wep", "wpa", "wpa2", "wpa3", "wpa2/wpa3", "owe"];
 
 /// Renders a value for insertion: bare when it lexes as a plain word,
 /// otherwise a quoted, escaped string.

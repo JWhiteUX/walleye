@@ -21,3 +21,9 @@ http	http.method == POST and http.req_bytes > 10KB
 tls	tls.cert_self_signed == true
 tls	tls.ja4 ~ "t12*"
 frames	frame.tcp_flags == 2
+wifi	
+wifi	wifi.kind == deauth and wifi.reason == 7
+wifi	mac 42:00:5e:00:53:9c
+wifi_aps	
+wifi_aps	ap.security == open and ap.randomized == true
+wifi_clients	client.probed ~ "*corp*"

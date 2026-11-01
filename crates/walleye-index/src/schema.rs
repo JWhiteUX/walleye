@@ -4,7 +4,7 @@
 use duckdb::types::Value;
 use walleye_core::{
     ApiError, CaptureFormat, CaptureRow, Direction, DnsRow, FileRow, Finding, FlowRow, FrameRow,
-    HttpRow, Ioc, IocType, TlsRow, error::ApiResult,
+    HttpRow, Ioc, IocType, TlsRow, WifiApRow, WifiClientRow, WifiKind, WifiRow, error::ApiResult,
 };
 
 /// One index table.
@@ -19,23 +19,34 @@ pub enum Tab {
     Findings,
     Iocs,
     Captures,
+    /// 802.11 frames (contract v2), written by ingest.
+    Wifi,
+    /// Derived from `wifi` at `Index::open`; never written to Parquet.
+    WifiAps,
+    /// Derived from `wifi` at `Index::open`; never written to Parquet.
+    WifiClients,
 }
 
-pub const DATA_TABLES: [Tab; 6] = [
+/// Tables ingest writes (staged, segmented, compacted).
+pub const DATA_TABLES: [Tab; 7] = [
     Tab::Frames,
     Tab::Flows,
     Tab::Dns,
     Tab::Http,
     Tab::Tls,
     Tab::Files,
+    Tab::Wifi,
 ];
-pub const ALL_TABLES: [Tab; 9] = [
+/// Tables stored as Parquet (data + results + capture). The derived
+/// `wifi_aps` / `wifi_clients` views are not in this list.
+pub const ALL_TABLES: [Tab; 10] = [
     Tab::Frames,
     Tab::Flows,
     Tab::Dns,
     Tab::Http,
     Tab::Tls,
     Tab::Files,
+    Tab::Wifi,
     Tab::Findings,
     Tab::Iocs,
     Tab::Captures,
@@ -53,6 +64,9 @@ impl Tab {
             Tab::Findings => "findings",
             Tab::Iocs => "iocs",
             Tab::Captures => "captures",
+            Tab::Wifi => "wifi",
+            Tab::WifiAps => "wifi_aps",
+            Tab::WifiClients => "wifi_clients",
         }
     }
 
@@ -172,6 +186,50 @@ impl Tab {
                 ("link_type", "UINTEGER"),
                 ("frame_count", "UBIGINT"),
             ],
+            Tab::Wifi => &[
+                ("ts", "BIGINT"),
+                ("frame_no", "UBIGINT"),
+                ("kind", "VARCHAR"),
+                ("protected", "BOOLEAN"),
+                ("retry", "BOOLEAN"),
+                ("src", "VARCHAR"),
+                ("dst", "VARCHAR"),
+                ("tx", "VARCHAR"),
+                ("bssid", "VARCHAR"),
+                ("channel", "USMALLINT"),
+                ("freq_mhz", "USMALLINT"),
+                ("signal_dbm", "SMALLINT"),
+                ("ssid", "VARCHAR"),
+                ("security", "VARCHAR"),
+                ("reason", "USMALLINT"),
+                ("seq", "USMALLINT"),
+                ("len", "UINTEGER"),
+            ],
+            Tab::WifiAps => &[
+                ("bssid", "VARCHAR"),
+                ("ssid", "VARCHAR"),
+                ("channel", "USMALLINT"),
+                ("security", "VARCHAR"),
+                ("first_ts", "BIGINT"),
+                ("last_ts", "BIGINT"),
+                ("beacons", "UBIGINT"),
+                ("frames", "UBIGINT"),
+                ("clients", "UBIGINT"),
+                ("signal_max", "SMALLINT"),
+                ("randomized", "BOOLEAN"),
+                ("first_frame", "UBIGINT"),
+            ],
+            Tab::WifiClients => &[
+                ("mac", "VARCHAR"),
+                ("randomized", "BOOLEAN"),
+                ("first_ts", "BIGINT"),
+                ("last_ts", "BIGINT"),
+                ("frames", "UBIGINT"),
+                ("probed_ssids", "VARCHAR[]"),
+                ("bssids", "VARCHAR[]"),
+                ("signal_max", "SMALLINT"),
+                ("first_frame", "UBIGINT"),
+            ],
         }
     }
 
@@ -184,6 +242,9 @@ impl Tab {
             Tab::Findings => "score DESC, finding_id",
             Tab::Iocs => "first_seen, ioc_id",
             Tab::Captures => "capture_id",
+            Tab::Wifi => "ts, frame_no",
+            Tab::WifiAps => "bssid",
+            Tab::WifiClients => "mac",
         }
     }
 
@@ -319,6 +380,28 @@ pub fn file_values(r: &FileRow) -> Vec<Value> {
         opt_text(&r.filename),
         opt_text(&r.mime_type),
         opt(r.size_bytes, Value::UBigInt),
+    ]
+}
+
+pub fn wifi_values(r: &WifiRow) -> Vec<Value> {
+    vec![
+        Value::BigInt(r.ts),
+        Value::UBigInt(r.frame_no),
+        text(r.kind.as_str()),
+        Value::Boolean(r.protected),
+        Value::Boolean(r.retry),
+        opt_text(&r.src),
+        opt_text(&r.dst),
+        opt_text(&r.tx),
+        opt_text(&r.bssid),
+        opt(r.channel, Value::USmallInt),
+        opt(r.freq_mhz, Value::USmallInt),
+        opt(r.signal_dbm, Value::SmallInt),
+        opt_text(&r.ssid),
+        opt_text(&r.security),
+        opt(r.reason, Value::USmallInt),
+        opt(r.seq, Value::USmallInt),
+        Value::UInt(r.len),
     ]
 }
 
@@ -499,6 +582,61 @@ pub fn file_from(r: &duckdb::Row<'_>) -> ApiResult<FileRow> {
         filename: r.get(5).map_err(db)?,
         mime_type: r.get(6).map_err(db)?,
         size_bytes: r.get(7).map_err(db)?,
+    })
+}
+
+pub fn wifi_from(r: &duckdb::Row<'_>) -> ApiResult<WifiRow> {
+    let kind: String = r.get(2).map_err(db)?;
+    Ok(WifiRow {
+        ts: r.get(0).map_err(db)?,
+        frame_no: r.get(1).map_err(db)?,
+        kind: WifiKind::parse(&kind)
+            .ok_or_else(|| ApiError::internal(format!("wifi kind {kind:?}")))?,
+        protected: r.get(3).map_err(db)?,
+        retry: r.get(4).map_err(db)?,
+        src: r.get(5).map_err(db)?,
+        dst: r.get(6).map_err(db)?,
+        tx: r.get(7).map_err(db)?,
+        bssid: r.get(8).map_err(db)?,
+        channel: r.get(9).map_err(db)?,
+        freq_mhz: r.get(10).map_err(db)?,
+        signal_dbm: r.get(11).map_err(db)?,
+        ssid: r.get(12).map_err(db)?,
+        security: r.get(13).map_err(db)?,
+        reason: r.get(14).map_err(db)?,
+        seq: r.get(15).map_err(db)?,
+        len: r.get(16).map_err(db)?,
+    })
+}
+
+pub fn wifi_ap_from(r: &duckdb::Row<'_>) -> ApiResult<WifiApRow> {
+    Ok(WifiApRow {
+        bssid: r.get(0).map_err(db)?,
+        ssid: r.get(1).map_err(db)?,
+        channel: r.get(2).map_err(db)?,
+        security: r.get(3).map_err(db)?,
+        first_ts: r.get(4).map_err(db)?,
+        last_ts: r.get(5).map_err(db)?,
+        beacons: r.get(6).map_err(db)?,
+        frames: r.get(7).map_err(db)?,
+        clients: r.get(8).map_err(db)?,
+        signal_max: r.get(9).map_err(db)?,
+        randomized: r.get(10).map_err(db)?,
+        first_frame: r.get(11).map_err(db)?,
+    })
+}
+
+pub fn wifi_client_from(r: &duckdb::Row<'_>) -> ApiResult<WifiClientRow> {
+    Ok(WifiClientRow {
+        mac: r.get(0).map_err(db)?,
+        randomized: r.get(1).map_err(db)?,
+        first_ts: r.get(2).map_err(db)?,
+        last_ts: r.get(3).map_err(db)?,
+        frames: r.get(4).map_err(db)?,
+        probed_ssids: str_list(r.get(5).map_err(db)?),
+        bssids: str_list(r.get(6).map_err(db)?),
+        signal_max: r.get(7).map_err(db)?,
+        first_frame: r.get(8).map_err(db)?,
     })
 }
 

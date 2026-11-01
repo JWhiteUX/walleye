@@ -370,6 +370,9 @@ fn value_strategy() -> impl Strategy<Value = String> {
         "(10|192|172)\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}(/[0-9]{1,2})?",
         Just("true".to_string()),
         Just("'; DROP TABLE flows; --".to_string()),
+        "[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}",
+        "\"[0-9a-f]{2}(-[0-9a-f]{2}){5}\"",
+        "(fe80|2001:db8)::[0-9a-f]{1,4}",
         Just("\"'); SELECT * FROM read_csv('/etc/passwd'); --\"".to_string()),
     ]
 }
@@ -383,6 +386,7 @@ fn term_strategy() -> impl Strategy<Value = String> {
             .prop_map(|(f, vs)| format!("{f} in [{}]", vs.join(", "))),
         value_strategy().prop_map(|v| format!("host {v}")),
         "[0-9]{1,5}".prop_map(|v| format!("port {v}")),
+        value_strategy().prop_map(|v| format!("mac {v}")),
         proptest::sample::select(vec!["dns", "http", "tls", "tcp", "udp", "icmp"])
             .prop_map(str::to_string),
     ]
@@ -466,11 +470,21 @@ fn injection_attempts_are_parameters() {
         r#"http.uri ~ "') OR 1=1 --""#,
         r#"tls.sni in ["a'b", "c\"d", "e\\f"]"#,
     ] {
-        for view in ALL_VIEWS {
+        for view in ALL_VIEWS.into_iter().filter(|v| !v.is_wifi()) {
             let out = c(t, view);
             assert_sql_safe(&out.sql, &out.params);
             assert!(!out.sql.contains("DROP") && !out.sql.contains("1=1"));
         }
+    }
+    for (t, view) in [
+        (r#"wifi.ssid == "'; DROP TABLE wifi; --""#, View::Wifi),
+        (r#"wifi.bssid ~ "') OR 1=1 --""#, View::Wifi),
+        (r#"ap.ssid in ["a'b", "c\"d", "e\\f"]"#, View::WifiAps),
+        (r#"client.probed ~ "x' OR 1=1 --""#, View::WifiClients),
+    ] {
+        let out = c(t, view);
+        assert_sql_safe(&out.sql, &out.params);
+        assert!(!out.sql.contains("DROP") && !out.sql.contains("1=1"));
     }
 }
 
@@ -495,4 +509,96 @@ fn autocomplete_static_contexts() {
     // Cursor beyond the text or inside a multi-byte char is clamped.
     let _ = filter::autocomplete_static("dns.query == \"é", 15);
     let _ = filter::autocomplete_static("é", 1);
+}
+
+#[test]
+fn mac_literals_lex_as_one_value_without_breaking_ipv6() {
+    // Bare MACs (any case, `:` or `-`) are one value token, stored lowercase.
+    let o = c("wifi.src == AA:BB:CC:DD:EE:FF", View::Wifi);
+    assert_eq!(o.sql, "(src = ?)");
+    assert_eq!(o.params, vec![Param::Str("aa:bb:cc:dd:ee:ff".into())]);
+    let o = c(
+        "wifi.bssid in [42-00-5e-00-53-9c, \"E8:00:5e:00:53:88\"]",
+        View::Wifi,
+    );
+    assert_eq!(o.sql, "(bssid IN (?, ?))");
+    assert_eq!(
+        o.params,
+        vec![
+            Param::Str("42:00:5e:00:53:9c".into()),
+            Param::Str("e8:00:5e:00:53:88".into())
+        ]
+    );
+    // Juxtaposed with another term (implicit `and`).
+    let o = c(
+        "wifi.tx == 00:11:22:33:44:55 wifi.kind == deauth",
+        View::Wifi,
+    );
+    assert_eq!(o.params.len(), 2);
+    // `~` globs a MAC field case-insensitively.
+    let o = c("wifi.tx ~ \"42:00:*\"", View::Wifi);
+    assert_eq!(o.sql, "(tx ILIKE ? ESCAPE '\\')");
+    // IPv6 literals still parse as IPs.
+    for t in [
+        "host fe80::1",
+        "src 2001:db8::1",
+        "dst_ip == ::1",
+        "src_ip in [fe80::1, 2001:db8::1, 10.0.0.1]",
+        "host ::ffff:10.0.0.1",
+    ] {
+        let o = c(t, View::Flows);
+        assert!(!o.params.is_empty(), "{t}");
+    }
+    assert_eq!(
+        c("src fe80::1", View::Flows).params,
+        vec![Param::Str("fe80::1".into())]
+    );
+    // A MAC is not an IP, and an IP is not a MAC.
+    for (t, view) in [
+        ("src aa:bb:cc:dd:ee:ff", View::Flows),
+        ("wifi.src == fe80::1", View::Wifi),
+        ("wifi.src == aa:bb:cc:dd:ee", View::Wifi),
+        ("wifi.src == aa:bb:cc:dd:ee:ff:00", View::Wifi),
+        ("mac", View::Wifi),
+        ("mac ==", View::Wifi),
+        ("mac aa:bb:cc:dd:ee:gg", View::Wifi),
+    ] {
+        let e = parse(t).and_then(|e| compile(&e, view)).expect_err(t);
+        assert_eq!(e.code, ErrorCode::InvalidFilter, "{t}");
+        assert!(e.span.is_some(), "{t}");
+    }
+}
+
+#[test]
+fn mac_shorthand_depends_on_the_view() {
+    let p = vec![Param::Str("aa:bb:cc:dd:ee:ff".into())];
+    let o = c("mac AA:BB:CC:DD:EE:FF", View::Wifi);
+    assert_eq!(o.sql, "((src = ?) OR (dst = ?) OR (tx = ?) OR (bssid = ?))");
+    assert_eq!(o.params, vec![p[0].clone(); 4]);
+    let o = c("MAC \"aa-bb-cc-dd-ee-ff\"", View::WifiAps);
+    assert_eq!((o.sql.as_str(), o.params), ("((bssid = ?))", p.clone()));
+    let o = c("not mac aa:bb:cc:dd:ee:ff", View::WifiClients);
+    assert_eq!(o.sql, "(NOT coalesce(((mac = ?)), FALSE))");
+    for view in ALL_VIEWS.into_iter().filter(|v| !v.is_wifi()) {
+        let e = parse("mac aa:bb:cc:dd:ee:ff").expect("parse");
+        assert_eq!(
+            compile(&e, view).expect_err("non-wifi").code,
+            ErrorCode::InvalidFilter
+        );
+    }
+    let e = parse("wifi.kind == deauth and mac 42:00:5e:00:53:9c").expect("parse");
+    assert_eq!(e.literals().len(), 2);
+}
+
+#[test]
+fn wifi_autocomplete_static_values() {
+    let s = filter::autocomplete_static("wifi.kind == pro", 16);
+    let l: Vec<&str> = s.iter().map(|x| x.label.as_str()).collect();
+    assert_eq!(l, vec!["probe_req", "probe_resp"]);
+    let s = filter::autocomplete_static("ap.security == wpa2", 19);
+    let l: Vec<&str> = s.iter().map(|x| x.label.as_str()).collect();
+    assert_eq!(l, vec!["wpa2", "wpa2/wpa3"]);
+    let s = filter::autocomplete_static("wifi.bssid ", 11);
+    assert!(s.iter().any(|x| x.label == "~"));
+    assert!(!s.iter().any(|x| x.label == ">"));
 }

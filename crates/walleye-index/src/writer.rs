@@ -28,7 +28,8 @@ use walleye_core::{
 
 use crate::schema::{self, ALL_TABLES, DATA_TABLES, Tab};
 
-pub(crate) const FORMAT_VERSION: u32 = 2;
+/// 3: the `wifi` table (contract v2, 802.11 captures).
+pub(crate) const FORMAT_VERSION: u32 = 3;
 pub(crate) const MANIFEST: &str = "manifest.json";
 const CHECKPOINT: &str = "checkpoint.json";
 /// Parquet options for every file we write.
@@ -115,7 +116,7 @@ pub struct IndexWriter {
     sha256: Option<String>,
     /// Next segment number.
     seg: u32,
-    staged: [u64; 6],
+    staged: [u64; DATA_TABLES.len()],
 }
 
 fn stage(t: Tab) -> String {
@@ -147,7 +148,7 @@ impl IndexWriter {
             conn,
             sha256: None,
             seg: 0,
-            staged: [0; 6],
+            staged: [0; DATA_TABLES.len()],
         })
     }
 
@@ -318,7 +319,7 @@ impl IndexSink for IndexWriter {
                 .execute_batch(&format!("DELETE FROM {}", stage(t)))
                 .map_err(db)?;
         }
-        self.staged = [0; 6];
+        self.staged = [0; DATA_TABLES.len()];
         self.sha256 = Some(capture.sha256.clone());
         // An index being (re)written is not complete.
         let _ = fs::remove_file(self.dir.join(MANIFEST));
@@ -368,8 +369,9 @@ impl IndexSink for IndexWriter {
             RecordBatch::Files(v) => {
                 self.append(Tab::Files, v.iter().map(|r| Ok(schema::file_values(r))))
             }
-            // Contract v2 stub: the `wifi` table is not written yet.
-            RecordBatch::Wifi(_) => Ok(()),
+            RecordBatch::Wifi(v) => {
+                self.append(Tab::Wifi, v.iter().map(|r| Ok(schema::wifi_values(r))))
+            }
         }
     }
 
