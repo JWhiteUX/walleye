@@ -31,6 +31,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use walleye_core::findings::EVIDENCE_CAP;
 use walleye_core::mac::{parse_mac, text_is_locally_administered};
 use walleye_core::rules::render_template;
+use walleye_core::text::quote_ssid;
 use walleye_core::{Evidence, FrameNo, Reason, Ts, WifiKind, WifiRow};
 
 use crate::combine::{Entity, Hit};
@@ -64,8 +65,9 @@ const MAX_BEACON_SSIDS: usize = 64;
 const MAX_PROBES: usize = 100_000;
 /// Longest wait between futile deauth-map sweeps, in windows.
 const MAX_SWEEP_BACKOFF: i64 = 64;
-/// SSIDs are at most 32 bytes on the air.
-const MAX_SSID: usize = 32;
+/// Longest stored SSID used as a key (32 raw bytes escaped are ≤ 128 chars;
+/// this is only a bound against hostile sources).
+const MAX_SSID_KEY: usize = 256;
 /// Sub-buckets of the deauth sliding window (the window is approximated to
 /// within one sub-bucket, `window_s / SUB`).
 const SUB: usize = 6;
@@ -130,13 +132,14 @@ fn sibling_group(m: &str) -> &str {
     m.get(3..14).unwrap_or(m)
 }
 
-/// A non-hidden SSID, clipped to 32 bytes. Empty, whitespace-only and
-/// NUL-filled (sanitized to `?`) SSIDs are hidden networks.
+/// A non-hidden SSID, as stored: the full escaped form is the key (ingest
+/// caps the raw SSID at 32 bytes, but `\\` / `\xHH` escapes make the stored
+/// text longer, and clipping it would merge different networks). Ingest
+/// writes hidden and all-NUL SSIDs as ""; whitespace-only and NUL text is
+/// treated as hidden too. A network really named "???" is not hidden.
 fn visible_ssid(s: Option<&str>) -> Option<&str> {
-    let s = clip(s?, MAX_SSID);
-    if s.chars()
-        .all(|c| c == '\0' || c == '?' || c.is_whitespace())
-    {
+    let s = clip(s?, MAX_SSID_KEY);
+    if s.chars().all(|c| c == '\0' || c.is_whitespace()) {
         None
     } else {
         Some(s)
@@ -182,23 +185,18 @@ fn push_notes(explanation: &mut String, notes: &[String]) {
     }
 }
 
-/// An SSID for splicing inside `"…"` in a title or explanation: printable
-/// text (`display`) with `\` and `"` escaped, so a crafted SSID cannot close
-/// the quote and forge the text that follows.
-fn ssid_text(s: &str) -> String {
-    display(s).replace('\\', "\\\\").replace('"', "\\\"")
+/// A stored SSID quoted for a title or explanation: the `display` form
+/// (printable, clipped) wrapped by the one shared quoting rule,
+/// `walleye_core::text::quote_ssid` (escapes `"` only; stored SSIDs already
+/// have `\` escaped by ingest), so a crafted SSID cannot close the quote.
+fn ssid_quoted(s: &str) -> String {
+    quote_ssid(&display(s))
 }
 
 fn examples<'a>(it: impl Iterator<Item = &'a str>, n: usize, quote: bool) -> String {
     let v: Vec<String> = it
         .take(n)
-        .map(|s| {
-            if quote {
-                format!("\"{}\"", ssid_text(s))
-            } else {
-                display(s)
-            }
-        })
+        .map(|s| if quote { ssid_quoted(s) } else { display(s) })
         .collect();
     if v.is_empty() {
         "none".into()
@@ -724,7 +722,7 @@ fn analyze_deauth(
         }
         let bssid = t.bssids.iter().next().map(String::as_str);
         let ssid = match bssid.and_then(|b| aps.get(b)).map(|a| a.ssid.as_str()) {
-            Some(s) if !s.is_empty() => format!("\"{}\"", ssid_text(s)),
+            Some(s) if !s.is_empty() => ssid_quoted(s),
             Some(_) => "a hidden network".into(),
             None => "an unknown network".into(),
         };
@@ -804,7 +802,7 @@ fn analyze_deauth(
 struct TwinBss {
     bssid: String,
     sec: [u64; SECURITIES.len()],
-    channels: Vec<u16>,
+    channels: Vec<Chan>,
     first_ts: Ts,
     last_ts: Ts,
     frames: Vec<FrameNo>,
@@ -864,7 +862,7 @@ impl TwinCol {
         b.total += 1;
         b.last_ts = row.ts;
         push_cap(&mut b.frames, row.frame_no, EVIDENCE_CAP);
-        if let Some(c) = row.channel {
+        if let Some(c) = chan(row) {
             if !b.channels.contains(&c) && b.channels.len() < MAX_CHANNELS {
                 b.channels.push(c);
             }
@@ -872,13 +870,57 @@ impl TwinCol {
     }
 }
 
-fn channels_text(c: &[u16]) -> String {
+/// Channel numbers repeat across bands (2.4 GHz ch 1 = 2412 MHz, 6 GHz
+/// ch 1 = 5955 MHz), so a channel is (band, number).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Band {
+    G2,
+    G5,
+    G6,
+}
+
+type Chan = (Band, u16);
+
+fn band_of(freq_mhz: u16) -> Band {
+    if freq_mhz < 3000 {
+        Band::G2
+    } else if freq_mhz < 5925 {
+        Band::G5
+    } else {
+        Band::G6
+    }
+}
+
+/// (band, channel) of a row: band from the radiotap frequency when present,
+/// else guessed from the number (1-14 = 2.4 GHz, else 5 GHz; 6 GHz cannot
+/// be told apart without a frequency).
+fn chan(row: &WifiRow) -> Option<Chan> {
+    let c = row.channel?;
+    let band = match row.freq_mhz {
+        Some(f) if f > 0 => band_of(f),
+        _ if c <= 14 => Band::G2,
+        _ => Band::G5,
+    };
+    Some((band, c))
+}
+
+fn channels_text(c: &[Chan]) -> String {
     if c.is_empty() {
         return "an unknown channel".into();
     }
     let mut c = c.to_vec();
     c.sort_unstable();
-    let v: Vec<String> = c.iter().map(u16::to_string).collect();
+    let v: Vec<String> = c
+        .iter()
+        .map(|(b, n)| {
+            let band = match b {
+                Band::G2 => "2.4",
+                Band::G5 => "5",
+                Band::G6 => "6",
+            };
+            format!("{n} ({band} GHz)")
+        })
+        .collect();
     format!("channel {}", v.join("/"))
 }
 
@@ -917,7 +959,7 @@ fn analyze_twin(col: &TwinCol, rule: &Rule, rule_idx: usize, out: &mut Vec<Hit>)
         let (orig, orig_sec) = strong[0];
         let strong_first = orig.first_ts;
         let strong_rand = strong.iter().any(|(b, _)| randomized(&b.bssid));
-        let strong_channels: Vec<u16> = strong
+        let strong_channels: Vec<Chan> = strong
             .iter()
             .flat_map(|(b, _)| b.channels.iter().copied())
             .collect();
@@ -963,7 +1005,8 @@ fn analyze_twin(col: &TwinCol, rule: &Rule, rule_idx: usize, out: &mut Vec<Hit>)
                 continue;
             }
             let mut v = BTreeMap::new();
-            v.insert("ssid".into(), ssid_text(ssid));
+            // Already quoted: the templates use `{ssid}` without quotes.
+            v.insert("ssid".into(), ssid_quoted(ssid));
             v.insert("bssid".into(), display(&w.bssid));
             v.insert("security".into(), SECURITIES[w_sec].to_string());
             v.insert("channel".into(), channels_text(&w.channels));
@@ -1443,8 +1486,11 @@ mod tests {
 
     #[test]
     fn ssid_quotes_are_escaped() {
-        assert_eq!(ssid_text(r#"Free" ch 6 wpa3"#), r#"Free\" ch 6 wpa3"#);
-        assert_eq!(ssid_text(r#"a\"#), r#"a\\"#);
+        assert_eq!(ssid_quoted(r#"Free" ch 6 wpa3"#), r#""Free\" ch 6 wpa3""#);
+        // Stored `a\b` is `a\\b` (ingest escaped it); not doubled again, so
+        // findings match packet summaries.
+        assert_eq!(ssid_quoted(r"a\\b"), r#""a\\b""#);
+        assert_eq!(ssid_quoted(r"a\\b"), quote_ssid(r"a\\b"));
         assert_eq!(examples(["x\"y"].into_iter(), 1, true), r#""x\"y""#);
     }
 
@@ -1452,11 +1498,59 @@ mod tests {
     fn hidden_ssids() {
         assert_eq!(visible_ssid(Some("")), None);
         assert_eq!(visible_ssid(Some("   ")), None);
-        assert_eq!(visible_ssid(Some("????????")), None);
         assert_eq!(visible_ssid(Some("\0\0\0")), None);
         assert_eq!(visible_ssid(None), None);
         assert_eq!(visible_ssid(Some("HomeNet")), Some("HomeNet"));
-        assert_eq!(visible_ssid(Some(&"x".repeat(100))).map(str::len), Some(32));
+        // A network really named "???" is not hidden (ingest stores hidden
+        // and all-NUL SSIDs as "").
+        assert_eq!(visible_ssid(Some("???")), Some("???"));
+        // Escaped forms longer than 32 bytes are kept whole: two networks
+        // sharing a 32-byte escaped prefix stay two keys.
+        let a = format!("{}\\x01", r"\x00".repeat(8));
+        let b = format!("{}\\x02", r"\x00".repeat(8));
+        assert_ne!(visible_ssid(Some(&a)), visible_ssid(Some(&b)));
+        assert_eq!(visible_ssid(Some(&a)).map(str::len), Some(36));
+        // Hostile sources stay bounded.
+        assert_eq!(
+            visible_ssid(Some(&"x".repeat(1000))).map(str::len),
+            Some(MAX_SSID_KEY)
+        );
+    }
+
+    #[test]
+    fn channels_compare_by_band() {
+        let mut r = WifiRow {
+            ts: 0,
+            frame_no: 1,
+            kind: WifiKind::Beacon,
+            protected: false,
+            retry: false,
+            src: None,
+            dst: None,
+            tx: None,
+            bssid: None,
+            channel: Some(1),
+            freq_mhz: Some(2412),
+            signal_dbm: None,
+            ssid: None,
+            security: None,
+            reason: None,
+            seq: None,
+            len: 0,
+        };
+        let g2 = chan(&r);
+        r.freq_mhz = Some(5955);
+        let g6 = chan(&r);
+        assert_ne!(g2, g6);
+        assert_eq!(g6, Some((Band::G6, 1)));
+        r.freq_mhz = Some(5180);
+        r.channel = Some(36);
+        assert_eq!(chan(&r), Some((Band::G5, 36)));
+        r.freq_mhz = None;
+        assert_eq!(chan(&r), Some((Band::G5, 36)));
+        r.channel = Some(11);
+        assert_eq!(chan(&r), Some((Band::G2, 11)));
+        assert_eq!(channels_text(&[(Band::G6, 1)]), "channel 1 (6 GHz)");
     }
 
     #[test]

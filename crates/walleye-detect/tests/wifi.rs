@@ -700,19 +700,12 @@ fn hidden_and_default_ssids_never_twin() {
     for (b, sec, ch) in HIDDEN {
         w.beacons(b, "", sec, ch, T0, T0 + 10 * MIN, S);
     }
-    // NUL-filled hidden SSIDs after sanitising.
-    w.beacons(
-        "00:11:22:33:44:55",
-        "????????",
-        "wpa2",
-        6,
-        T0,
-        T0 + 10 * MIN,
-        S,
-    );
+    // All-NUL hidden SSIDs: ingest stores them as "" (one with raw NULs
+    // from a non-conforming source is treated as hidden too).
+    w.beacons("00:11:22:33:44:55", "", "wpa2", 6, T0, T0 + 10 * MIN, S);
     w.beacons(
         "02:11:22:33:44:56",
-        "????????",
+        "\0\0\0\0",
         "open",
         11,
         T0 + 2 * MIN,
@@ -1338,4 +1331,96 @@ fn ssid_quotes_cannot_forge_explanations() {
         "{}",
         r.explanation
     );
+}
+
+// ------------------------------------------------ SSID keys and channels --
+
+#[test]
+fn network_named_question_marks_is_not_hidden() {
+    // A real SSID "???" is a network like any other: an open twin of it
+    // fires (only "" is hidden).
+    let mut w = W::new(17);
+    w.beacons(MESH[0].0, "???", "wpa2", 1, T0, T0 + 10 * MIN, S);
+    w.beacons(TWIN, "???", "open", 4, T0 + 2 * MIN, T0 + 10 * MIN, S);
+    let f = detect(&w.build());
+    assert_eq!(rank(&f, TWIN), Some(1), "{}", summary(&f));
+    assert!(f[0].title.contains(r#""???""#), "{}", f[0].title);
+}
+
+#[test]
+fn escaped_ssids_sharing_32_bytes_stay_distinct() {
+    // Stored (escaped) SSIDs longer than 32 bytes that share their first 32
+    // bytes are two networks: no false twin, no merged karma counts.
+    let a = format!("{}\\x01", r"\x00".repeat(8));
+    let b = format!("{}\\x02", r"\x00".repeat(8));
+    assert_eq!(a[..32], b[..32]);
+    let mut w = W::new(18);
+    w.beacons(MESH[0].0, &a, "wpa2", 1, T0, T0 + 10 * MIN, S);
+    w.beacons(TWIN, &b, "open", 4, T0 + 2 * MIN, T0 + 10 * MIN, S);
+    let f = detect(&w.build());
+    assert!(f.is_empty(), "{}", summary(&f));
+}
+
+#[test]
+fn twin_on_same_channel_number_in_another_band_is_another_channel() {
+    // Real AP on 2.4 GHz channel 1 (2412 MHz), twin on 6 GHz channel 1
+    // (5955 MHz): same number, different channel.
+    let mut w = W::new(19);
+    w.beacons(MESH[0].0, "HomeNet", "wpa2", 1, T0, T0 + 10 * MIN, S);
+    w.beacons(TWIN, "HomeNet", "open", 1, T0 + 2 * MIN, T0 + 10 * MIN, S);
+    for r in &mut w.rows {
+        r.freq_mhz = Some(if r.bssid.as_deref() == Some(TWIN) {
+            5955
+        } else {
+            2412
+        });
+    }
+    let f = detect(&w.build());
+    assert_eq!(rank(&f, TWIN), Some(1), "{}", summary(&f));
+    let r = reason(&f, TWIN, "wifi.evil_twin").expect("reason");
+    assert!(
+        r.explanation.contains("other_channel 15"),
+        "{}",
+        r.explanation
+    );
+    assert!(
+        r.explanation.contains("channel 1 (6 GHz)"),
+        "{}",
+        r.explanation
+    );
+    assert!(
+        r.explanation.contains("channel 1 (2.4 GHz)"),
+        "{}",
+        r.explanation
+    );
+
+    // Same band and number: not another channel.
+    let mut w = W::new(19);
+    w.beacons(MESH[0].0, "HomeNet", "wpa2", 1, T0, T0 + 10 * MIN, S);
+    w.beacons(TWIN, "HomeNet", "open", 1, T0 + 2 * MIN, T0 + 10 * MIN, S);
+    for r in &mut w.rows {
+        r.freq_mhz = Some(2412);
+    }
+    let f = detect(&w.build());
+    let r = reason(&f, TWIN, "wifi.evil_twin").expect("reason");
+    assert!(
+        !r.explanation.contains("other_channel"),
+        "{}",
+        r.explanation
+    );
+}
+
+#[test]
+fn stored_backslash_is_not_doubled_in_findings() {
+    // Ingest stores the SSID a\b as a\\b; findings show it exactly as
+    // packet summaries do (quote_ssid), not as a\\\\b.
+    let stored = r"a\\b";
+    let mut w = W::new(20);
+    w.beacons(MESH[0].0, stored, "wpa2", 1, T0, T0 + 10 * MIN, S);
+    w.beacons(TWIN, stored, "open", 4, T0 + 2 * MIN, T0 + 10 * MIN, S);
+    let f = detect(&w.build());
+    assert_eq!(rank(&f, TWIN), Some(1), "{}", summary(&f));
+    let q = walleye_core::text::quote_ssid(stored);
+    assert!(f[0].title.contains(&q), "{} vs {q}", f[0].title);
+    assert!(!f[0].title.contains(r"a\\\\b"), "{}", f[0].title);
 }
