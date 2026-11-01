@@ -85,3 +85,8 @@
 .wl-tl-tip-host { font-family: var(--wl-font-mono); font-weight: 600; }
 .wl-tl-tip ul { list-style: none; margin: 4px 0 0; padding: 0; }
 .wl-tl-tip li { display: flex; align-items: center; gap: 4px; }
+/* Randomized-MAC chip in the device-lane legend (matches the canvas glyph). */
+.wl-tl-chip {
+  display: inline-block; min-width: 12px; height: 13px; line-height: 11px; text-align: center;
+  border: 1px solid var(--wl-text-muted); font-size: 9px; font-weight: 600; color: var(--wl-text);
+}

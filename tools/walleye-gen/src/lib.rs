@@ -1,7 +1,8 @@
 //! Deterministic synthetic capture generator for Walleye fixtures
 //! (docs/CONTRACTS.md §9). Owner: Agent G.
 //!
-//! Output is classic pcap (Ethernet, µs timestamps). Every packet is
+//! Output is classic pcap (Ethernet, µs timestamps; the `wifi` scenarios
+//! write 802.11 + radiotap, link type 127). Every packet is
 //! well-formed: real TCP handshakes and teardowns, correct IP/UDP/TCP
 //! lengths and checksums, DNS wire format with name compression, HTTP/1.1,
 //! and TLS ClientHello/ServerHello/Certificate records. The same seed always
@@ -16,6 +17,7 @@ pub mod rng;
 pub mod scenario;
 pub mod sim;
 pub mod tls;
+pub mod wifi;
 pub mod x509;
 
 pub use scenario::{Labels, Options, Scenario, Summary, generate};

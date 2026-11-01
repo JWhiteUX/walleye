@@ -246,10 +246,18 @@ mod tests {
     fn parses_the_committed_query_file() {
         let text = include_str!("../../bench/queries.txt");
         let q = parse_queries(text).expect("parse");
-        assert_eq!(q.len(), 20, "BUILD_PROMPT expects 20 benchmark queries");
+        // BUILD_PROMPT's 20 wired queries plus 6 for the 802.11 views.
+        assert_eq!(q.len(), 26);
         assert_eq!(q[0].view, View::Flows);
         assert_eq!(q[0].filter, "");
         assert!(q.iter().any(|x| x.view == View::Frames));
+        for v in [View::Wifi, View::WifiAps, View::WifiClients] {
+            assert!(q.iter().any(|x| x.view == v), "{v:?}");
+        }
+        assert!(
+            q.iter()
+                .any(|x| x.view == View::Wifi && x.filter == "mac 42:00:5e:00:53:9c")
+        );
         assert!(q.iter().any(|x| x.filter == "dns.rcode == NXDOMAIN"));
     }
 
@@ -259,6 +267,11 @@ mod tests {
         assert!(parse_queries("# only a comment\n\n").is_err());
         let q = parse_queries("dns\n").expect("view only");
         assert_eq!(q[0].filter, "");
+        let q = parse_queries("wifi_aps\t\nwifi_clients\tclient.randomized == true\n")
+            .expect("wifi views");
+        assert_eq!(q[0].view, View::WifiAps);
+        assert_eq!(q[1].view, View::WifiClients);
+        assert!(parse_queries("wifi_ap\t").is_err());
     }
 
     #[test]

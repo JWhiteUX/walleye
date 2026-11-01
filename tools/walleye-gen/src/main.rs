@@ -1,4 +1,4 @@
-//! `walleye-gen --scenario <office|beacon|dns_tunnel|dga|scale> --seed <u64>
+//! `walleye-gen --scenario <office|beacon|dns_tunnel|dga|scale|wifi|wifi_benign> --seed <u64>
 //! --out <path.pcap> [--size-gb 10] [--ipv6] [--duration-min 120]`
 //!
 //! Writes the capture and `<stem>.labels.json` beside it. Owner: Agent G.
@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use walleye_gen::{Options, Scenario, generate, labels_path};
 
-const USAGE: &str = "usage: walleye-gen --scenario <office|beacon|dns_tunnel|dga|scale> --seed <u64> --out <path.pcap> [--size-gb <GiB, default 10, scale only>] [--ipv6] [--duration-min <minutes, default 120>]";
+const USAGE: &str = "usage: walleye-gen --scenario <office|beacon|dns_tunnel|dga|scale|wifi|wifi_benign> --seed <u64> --out <path.pcap> [--size-gb <GiB, default 10, scale only>] [--ipv6] [--duration-min <minutes, default 120; wifi scenarios cap at 30>]";
 
 fn parse_args() -> Result<(Options, PathBuf), String> {
     let mut scenario = None;

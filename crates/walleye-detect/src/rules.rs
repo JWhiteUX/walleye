@@ -30,6 +30,9 @@ pub const DETECTORS: &[&str] = &[
     "http_beaconing",
     "http_tls_port",
     "http_post_exfil",
+    "wifi_deauth",
+    "wifi_evil_twin",
+    "wifi_karma",
 ];
 
 /// Default value (and type) of one detector parameter.
@@ -53,6 +56,12 @@ const IGNORE_SUFFIXES: &[&str] = &[
 ];
 
 const BIG: f64 = 1e12;
+
+/// Factory-default SSIDs that unrelated neighbours share; an open "linksys"
+/// next to a WPA2 "linksys" is two households, not an evil twin.
+const DEFAULT_SSIDS: &[&str] = &[
+    "default", "linksys", "netgear", "dlink", "tp-link", "wireless", "setup", "android", "iphone",
+];
 
 /// Ports where a cleartext HTTP request line is out of place.
 const TLS_PORTS: &[f64] = &[
@@ -183,6 +192,39 @@ fn base_specs(detector: &str) -> &'static [(&'static str, Def)] {
             ("prevalence_ratio", Def::Num(0.3, 0.0, 1.0)),
             ("prevalence_factor", Def::Num(0.3, 0.0, 1.0)),
         ],
+        "wifi_deauth" => &[
+            ("window_s", Def::Num(60.0, 1.0, 3600.0)),
+            ("min_count", Def::Num(50.0, 2.0, BIG)),
+            ("rate_full", Def::Num(200.0, 2.0, BIG)),
+            ("targets_full", Def::Num(10.0, 2.0, BIG)),
+            ("handshake_window_s", Def::Num(30.0, 0.0, 3600.0)),
+            ("handshake_full", Def::Num(4.0, 1.0, BIG)),
+            ("self_leave_reasons", Def::Nums(&[3.0, 8.0])),
+            ("min_ref_beacons", Def::Num(8.0, 1.0, BIG)),
+            ("ref_max_age_s", Def::Num(120.0, 1.0, 86400.0)),
+            ("signal_match_db", Def::Num(6.0, 0.0, 60.0)),
+            ("signal_mismatch_db", Def::Num(10.0, 0.0, 60.0)),
+            ("signal_mismatch_full_db", Def::Num(20.0, 0.0, 60.0)),
+            ("mixed_share", Def::Num(0.25, 0.0, 1.0)),
+            ("genuine_factor", Def::Num(0.35, 0.0, 1.0)),
+            ("rejection_reasons", Def::Nums(&[6.0, 7.0])),
+            ("rejection_factor", Def::Num(0.5, 0.0, 1.0)),
+            ("long_single_s", Def::Num(600.0, 0.0, BIG)),
+            ("single_target_factor", Def::Num(0.5, 0.0, 1.0)),
+            ("max_findings", Def::Num(200.0, 1.0, 100_000.0)),
+        ],
+        "wifi_evil_twin" => &[
+            ("min_frames", Def::Num(3.0, 1.0, BIG)),
+            ("later_min_s", Def::Num(60.0, 0.0, BIG)),
+            ("ignore_ssids", Def::Strs(DEFAULT_SSIDS)),
+            ("max_findings", Def::Num(200.0, 1.0, 100_000.0)),
+        ],
+        "wifi_karma" => &[
+            ("min_ssids", Def::Num(10.0, 2.0, BIG)),
+            ("ssids_full", Def::Num(30.0, 2.0, BIG)),
+            ("echo_window_s", Def::Num(5.0, 0.0, 600.0)),
+            ("max_findings", Def::Num(200.0, 1.0, 100_000.0)),
+        ],
         _ => &[],
     }
 }
@@ -199,6 +241,22 @@ fn signal_names(detector: &str) -> &'static [&'static str] {
         "http_beaconing" => &["regularity", "count", "duration", "payload_uniformity"],
         "http_tls_port" => &["cleartext", "ip_host"],
         "http_post_exfil" => &["upload_volume", "ip_host", "repeat", "rate"],
+        "wifi_deauth" => &[
+            "rate",
+            "broadcast",
+            "targets",
+            "spoofed_bssid",
+            "handshake",
+            "signal_mismatch",
+        ],
+        "wifi_evil_twin" => &[
+            "security_mismatch",
+            "randomized",
+            "other_channel",
+            "appeared_later",
+            "oui_mismatch",
+        ],
+        "wifi_karma" => &["ssids", "echo", "open", "randomized"],
         _ => &[],
     }
 }
@@ -472,6 +530,10 @@ fn compile(def: RuleDef) -> ApiResult<Rule> {
         ("bytes_low", "bytes_high"),
         ("min_count", "count_full"),
         ("min_burst", "burst_full"),
+        ("min_count", "rate_full"),
+        ("min_ssids", "ssids_full"),
+        ("signal_match_db", "signal_mismatch_db"),
+        ("signal_mismatch_db", "signal_mismatch_full_db"),
     ];
     for (lo, hi) in pairs {
         if let (Some(a), Some(b)) = (nums.get(lo), nums.get(hi)) {

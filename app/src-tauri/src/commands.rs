@@ -14,7 +14,7 @@ use walleye_core::{
     ipc::{
         CaptureSession, Case, EvidenceRef, FindingsFilter, FrameRef, IngestStatus, IocFormat,
         JobId, Lanes, PacketView, Page, Pin, QueryRequest, ReportFormat, SavedQuery, Suggestion,
-        TimelineRequest,
+        TimeRange, TimelineRequest,
     },
 };
 
@@ -66,6 +66,15 @@ async fn timeline(state: State<'_, AppState>, req: TimelineRequest) -> R<Lanes> 
 #[tauri::command(rename_all = "snake_case")]
 async fn flow_frames(state: State<'_, AppState>, flow_id: u64) -> R<Vec<FrameRef>> {
     run(state, move |b| b.flow_frames(flow_id)).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+async fn device_frames(
+    state: State<'_, AppState>,
+    mac: String,
+    time_range: Option<TimeRange>,
+) -> R<Vec<FrameRef>> {
+    run(state, move |b| b.device_frames(&mac, time_range)).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -176,6 +185,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         query,
         timeline,
         flow_frames,
+        device_frames,
         packet,
         autocomplete,
         list_saved_queries,

@@ -3,7 +3,7 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useId, useRef, type KeyboardEvent } from "react";
 import type { FrameRef } from "../shared/bindings/FrameRef";
-import { formatTime } from "../shared/format";
+import { formatTime, visible } from "../shared/format";
 
 const ROW_H = 22;
 
@@ -11,10 +11,13 @@ export function FrameList({
   frames,
   selected,
   onSelect,
+  label,
 }: {
   frames: FrameRef[];
   selected: number | null;
   onSelect: (frameNo: number) => void;
+  /** Accessible name; says whose frames these are (flow or device). */
+  label?: string;
 }) {
   const base = useId().replace(/:/g, "");
   const scroll = useRef<HTMLDivElement>(null);
@@ -65,7 +68,7 @@ export function FrameList({
     <div
       ref={scroll}
       role="listbox"
-      aria-label={`Frames in flow (${frames.length})`}
+      aria-label={label ?? `Frames in flow (${frames.length})`}
       tabIndex={0}
       className="wl-frames"
       data-testid="frame-list"
@@ -90,11 +93,14 @@ export function FrameList({
               }}
             >
               <span className="wl-frame-no wl-mono">{f.frame_no}</span>
-              <span className="wl-frame-dir" aria-label={f.direction === "down" ? "responder to initiator" : "initiator to responder"}>
-                {f.direction === "down" ? "←" : "→"}
-              </span>
+              {f.direction !== null && (
+                // 802.11 frames have no flow direction; their summary names both addresses.
+                <span className="wl-frame-dir" aria-label={f.direction === "down" ? "responder to initiator" : "initiator to responder"}>
+                  {f.direction === "down" ? "←" : "→"}
+                </span>
+              )}
               <span className="wl-frame-time wl-mono">{formatTime(f.ts)}</span>
-              <span className="wl-frame-sum">{f.summary}</span>
+              <span className="wl-frame-sum">{visible(f.summary)}</span>
             </div>
           );
         })}

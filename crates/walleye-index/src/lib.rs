@@ -5,16 +5,21 @@
 //! ```text
 //! checkpoint.json      last accepted checkpoint while indexing (removed when complete)
 //! manifest.json        written last by `finish`: capture row + file list ("complete")
-//! frames/ flows/ dns/ http/ tls/ files/ findings/ iocs/ captures/   *.parquet
+//! frames/ flows/ dns/ http/ tls/ files/ wifi/ findings/ iocs/ captures/   *.parquet
 //! ```
+//!
+//! `wifi_aps` and `wifi_clients` (CONTRACTS §11.2) are derived from `wifi` at
+//! `Index::open` (see `wifi.rs`); they have no files of their own.
 
 pub mod filter;
 mod index;
 mod schema;
+mod wifi;
 mod writer;
 
 pub use filter::{Compiled, Expr, Param};
 pub use index::{Index, MAX_LIMIT, frame_summary};
+pub use wifi::{CLIENT_LIST_CAP, wifi_summary};
 pub use writer::IndexWriter;
 
 #[cfg(test)]

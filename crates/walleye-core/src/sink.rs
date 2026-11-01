@@ -10,7 +10,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CaptureRow, DnsRow, FileRow, Finding, FlowRow, FrameRow, HttpRow, Ioc, TlsRow, error::ApiResult,
+    CaptureRow, DnsRow, FileRow, Finding, FlowRow, FrameRow, HttpRow, Ioc, TlsRow, WifiRow,
+    error::ApiResult,
 };
 
 /// A batch of rows for one table. Ingest sends batches over a bounded channel
@@ -26,6 +27,8 @@ pub enum RecordBatch {
     Http(Vec<HttpRow>),
     Tls(Vec<TlsRow>),
     Files(Vec<FileRow>),
+    /// 802.11 management and data frames, in frame order (contract v2).
+    Wifi(Vec<WifiRow>),
 }
 
 /// Resume point. Ingest emits one every `CHECKPOINT_BYTES` of input.
@@ -70,6 +73,11 @@ pub trait DetectSource {
     fn for_each_dns(&self, f: &mut dyn FnMut(&DnsRow)) -> ApiResult<()>;
     fn for_each_http(&self, f: &mut dyn FnMut(&HttpRow)) -> ApiResult<()>;
     fn for_each_tls(&self, f: &mut dyn FnMut(&TlsRow)) -> ApiResult<()>;
+    /// 802.11 rows in `(ts, frame_no)` order. Sources without 802.11 data
+    /// yield nothing.
+    fn for_each_wifi(&self, _f: &mut dyn FnMut(&WifiRow)) -> ApiResult<()> {
+        Ok(())
+    }
 }
 
 /// Write side for analysis results. Implemented by walleye-index. Each call
@@ -88,6 +96,7 @@ pub struct MemorySource {
     pub dns: Vec<DnsRow>,
     pub http: Vec<HttpRow>,
     pub tls: Vec<TlsRow>,
+    pub wifi: Vec<WifiRow>,
 }
 
 impl DetectSource for MemorySource {
@@ -110,6 +119,10 @@ impl DetectSource for MemorySource {
     }
     fn for_each_tls(&self, f: &mut dyn FnMut(&TlsRow)) -> ApiResult<()> {
         self.tls.iter().for_each(f);
+        Ok(())
+    }
+    fn for_each_wifi(&self, f: &mut dyn FnMut(&WifiRow)) -> ApiResult<()> {
+        self.wifi.iter().for_each(f);
         Ok(())
     }
 }

@@ -1,29 +1,51 @@
-// Session table (Agent D). Views: flows, dns, http, tls, files.
+// Session table (Agent D). Views: flows, dns, http, tls, files, and on
+// 802.11 captures access points, clients and Wi-Fi frames (CONTRACTS §11.4).
 // Reads the shared selection's filter/time_range/hosts (never flow_ids, per
-// CONTRACTS §4) and writes selectFlows + selectFrame on row activation.
+// CONTRACTS §4) and writes selectFlows + selectFrame on row activation; an
+// 802.11 row writes selectDevice + selectFrame instead.
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { pinEvidence } from "../shared/caseEvents";
 import { useRegisterCommands, type Command } from "../shared/commands";
 import { useSelection } from "../shared/selection";
+
 import { useSession } from "../shared/session";
+import { currentCaptureKind, useCaptureKind } from "../shared/captureKind";
 import { useFilterStatus } from "../shell/filterStatus";
-import { COLUMNS, rowFrame, VIEW_LABEL, type AnyRow } from "./columns";
+import { COLUMNS, rowFrame, VIEW_LABEL, wifiRowTarget, type AnyRow } from "./columns";
 import { appendPredicate, composePredicate, fieldType } from "./predicates";
-import { TABLE_VIEWS, useTableStore, type TableView } from "./store";
+import { isWifiView, TABLE_VIEWS, useTableStore, visibleViews, type TableView } from "./store";
 import { useRows } from "./useRows";
 import { VirtualGrid } from "./VirtualGrid";
 import "./table.css";
 
-const VIEW_KEYS: Record<TableView, string> = { flows: "v f", dns: "v d", http: "v h", tls: "v t", files: "v i" };
+export const VIEW_KEYS: Record<TableView, string> = {
+  flows: "v f",
+  dns: "v d",
+  http: "v h",
+  tls: "v t",
+  files: "v i",
+  wifi_aps: "v a",
+  wifi_clients: "v c",
+  wifi: "v w",
+};
+const EMPTY_HOSTS: string[] = [];
 
 export function SessionTable() {
   const session = useSession((s) => s.session);
-  const { filter, time_range, hosts, flow_ids } = useSelection(
-    useShallow((s) => ({ filter: s.filter, time_range: s.time_range, hosts: s.hosts, flow_ids: s.flow_ids })),
+  const { filter, time_range, hosts, flow_ids, device, frame_no } = useSelection(
+    useShallow((s) => ({
+      filter: s.filter,
+      time_range: s.time_range,
+      hosts: s.hosts,
+      flow_ids: s.flow_ids,
+      device: s.device,
+      frame_no: s.frame_no,
+    })),
   );
   const selectFlows = useSelection((s) => s.selectFlows);
   const selectFrame = useSelection((s) => s.selectFrame);
+  const selectDevice = useSelection((s) => s.selectDevice);
   const setFilter = useSelection((s) => s.setFilter);
   const { view, sort, setView, setSort } = useTableStore(
     useShallow((s) => ({ view: s.view, sort: s.sort[s.view], setView: s.setView, setSort: s.setSort })),
@@ -31,9 +53,21 @@ export function SessionTable() {
   const reportFilter = useFilterStatus((s) => s.report);
   const [status, setStatus] = useState("");
 
+  // Captures with 802.11 rows get the Wi-Fi tabs (decided from data, so a
+  // mixed pcapng whose first interface is Ethernet still gets them); the IP
+  // tabs stay only if there are flows.
+  const captureId = session?.capture.capture_id ?? null;
+  const { wifi, hasFlows } = useCaptureKind();
+  const views = useMemo(() => visibleViews(wifi === true, hasFlows === true), [wifi, hasFlows]);
+  useEffect(() => {
+    if (!views.includes(view)) setView(views[0]!);
+  }, [views, view, setView]);
+  // Hosts never apply on 802.11 views (CONTRACTS §11.2).
+  const scopeHosts = isWifiView(view) ? EMPTY_HOSTS : hosts;
+
   const scope = useMemo(
-    () => ({ captureId: session?.capture.capture_id ?? null, view, filter, time_range, hosts, sort }),
-    [session, view, filter, time_range, hosts, sort],
+    () => ({ captureId: views.includes(view) ? captureId : null, view, filter, time_range, hosts: scopeHosts, sort }),
+    [captureId, views, view, filter, time_range, scopeHosts, sort],
   );
   const rows = useRows(scope);
 
@@ -49,13 +83,35 @@ export function SessionTable() {
 
   const columns = COLUMNS[view];
   const selectedSet = useMemo(() => new Set(flow_ids), [flow_ids]);
-  const isSelected = useCallback((r: AnyRow) => selectedSet.has(r.flow_id), [selectedSet]);
+  const isSelected = useCallback(
+    (r: AnyRow) => {
+      const row = r as unknown as Record<string, unknown>;
+      switch (view) {
+        case "wifi_aps":
+          return device !== null && row.bssid === device;
+        case "wifi_clients":
+          return device !== null && row.mac === device;
+        case "wifi":
+          return frame_no !== null && row.frame_no === frame_no;
+        default:
+          return selectedSet.has(row.flow_id as number);
+      }
+    },
+    [view, device, frame_no, selectedSet],
+  );
   const onActivate = useCallback(
     (r: AnyRow) => {
-      selectFlows([r.flow_id]);
+      const w = wifiRowTarget(view, r);
+      if (w) {
+        // Focus the device first (that clears selected flows), then its frame.
+        selectDevice(w.device);
+        selectFrame(w.frame);
+        return;
+      }
+      selectFlows([(r as { flow_id: number }).flow_id]);
       selectFrame(rowFrame(r));
     },
-    [selectFlows, selectFrame],
+    [view, selectDevice, selectFlows, selectFrame],
   );
   const sorting = useMemo(() => (sort ? [{ id: sort.column, desc: sort.desc }] : []), [sort]);
   const onSortingChange = useCallback(
@@ -99,11 +155,16 @@ export function SessionTable() {
   const commands = useMemo<Command[]>(
     () => [
       ...TABLE_VIEWS.map((v) => ({
-        id: `table.view-${v}`,
+        id: `table.view-${v.replace("_", "-")}`,
         title: `Show ${VIEW_LABEL[v]} view`,
         group: "Session table",
         shortcut: VIEW_KEYS[v],
         run: () => useTableStore.getState().setView(v),
+        // Only the tabs the open capture shows (see visibleViews).
+        enabled: () => {
+          const k = currentCaptureKind();
+          return visibleViews(k.wifi === true, k.hasFlows === true).includes(v);
+        },
       })),
       {
         id: "table.pin-flow",
@@ -143,7 +204,7 @@ export function SessionTable() {
       <div className="wl-table-bar">
         <h2 className="wl-panel-title">Sessions</h2>
         <div role="group" aria-label="View" className="wl-seg">
-          {TABLE_VIEWS.map((v) => (
+          {views.map((v) => (
             <button
               key={v}
               type="button"
@@ -190,9 +251,11 @@ export function SessionTable() {
             </span>
           )}
         </form>
-        <button type="button" onClick={() => void pinFlow()} disabled={!flow_ids.length || !session} title="Pin selected flow (Shift+P)">
-          Pin flow
-        </button>
+        {!isWifiView(view) && (
+          <button type="button" onClick={() => void pinFlow()} disabled={!flow_ids.length || !session} title="Pin selected flow (Shift+P)">
+            Pin flow
+          </button>
+        )}
       </div>
 
       <div className="wl-table-body">

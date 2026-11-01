@@ -5,8 +5,11 @@ import type { FlowRow } from "./FlowRow";
 import type { FrameRow } from "./FrameRow";
 import type { HttpRow } from "./HttpRow";
 import type { TlsRow } from "./TlsRow";
+import type { WifiApRow } from "./WifiApRow";
+import type { WifiClientRow } from "./WifiClientRow";
+import type { WifiRow } from "./WifiRow";
 
 /**
  * Rows of one view, tagged so TypeScript can narrow on `view`.
  */
-export type RowSet = { "view": "flows", "rows": Array<FlowRow> } | { "view": "dns", "rows": Array<DnsRow> } | { "view": "http", "rows": Array<HttpRow> } | { "view": "tls", "rows": Array<TlsRow> } | { "view": "files", "rows": Array<FileRow> } | { "view": "frames", "rows": Array<FrameRow> };
+export type RowSet = { "view": "flows", "rows": Array<FlowRow> } | { "view": "dns", "rows": Array<DnsRow> } | { "view": "http", "rows": Array<HttpRow> } | { "view": "tls", "rows": Array<TlsRow> } | { "view": "files", "rows": Array<FileRow> } | { "view": "frames", "rows": Array<FrameRow> } | { "view": "wifi", "rows": Array<WifiRow> } | { "view": "wifi_aps", "rows": Array<WifiApRow> } | { "view": "wifi_clients", "rows": Array<WifiClientRow> };

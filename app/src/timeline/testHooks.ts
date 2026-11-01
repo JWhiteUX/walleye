@@ -18,8 +18,8 @@ export function exposeTestHook(name: string, value: unknown): void {
 }
 
 exposeTestHook("selection", () => {
-  const { time_range, hosts, flow_ids, frame_no, filter } = useSelection.getState();
-  return { time_range, hosts, flow_ids, frame_no, filter };
+  const { time_range, hosts, flow_ids, frame_no, filter, device } = useSelection.getState();
+  return { time_range, hosts, flow_ids, frame_no, filter, device };
 });
 exposeTestHook("selectionActions", () => useSelection.getState());
 /** Load the open capture into the session store (normally the shell does this). */

@@ -1,0 +1,57 @@
+# 802.11 deauthentication / disassociation flood (CONTRACTS §11.3): one
+# transmitter sending many deauth/disassoc frames inside a short window, the
+# denial-of-service and handshake-capture tool pattern (aireplay-ng, mdk4).
+#
+# Keeping genuine APs quiet:
+# - The window gate: housekeeping and idle kicks are tens to a few hundred
+#   frames spread over a capture, not 50+ in one minute.
+# - Reason 3/8 sent by a station to its own AP ("I'm leaving") is not counted.
+# - Signal consistency (the standard WIDS check): when the deauths arrive as
+#   loud as the transmitter's own beacons (median within signal_match_db),
+#   the real AP almost certainly sent them, and the score is multiplied by
+#   genuine_factor. If they are also mostly reason 6/7 unicast rejections to
+#   its own stations, rejection_factor applies on top. Reason 7 alone is never
+#   suppressed (aireplay-ng uses it); only together with a matching signal.
+# - One station, no broadcast, over long_single_s: an AP rejecting a stuck
+#   client in a loop; single_target_factor.
+# - A locally administered BSSID scores nothing by itself (consumer APs use
+#   them for extra/hidden SSIDs).
+#
+# Raising the score: a deauth signal signal_mismatch_db+ away from the
+# beacons of the AP it claims to be (sent from somewhere else), a sender that
+# never beacons, broadcast share, many targets, EAPOL right after the burst.
+# Broadcast, targets and handshake count frames sent while over the gate and
+# scale with the rate.
+id: wifi.deauth_flood
+title: "Deauthentication flood from {tx}"
+detector: wifi_deauth
+attack_technique: T1498
+params:
+  window_s: 60              # sliding window for the rate
+  min_count: 50             # frames inside one window before anything scores
+  rate_full: 200            # frames per window for full rate points
+  targets_full: 10          # distinct unicast targets during the burst for full points
+  handshake_window_s: 30    # EAPOL this soon after a burst counts as capture
+  handshake_full: 4         # EAPOL frames (one 4-way handshake) for full points
+  self_leave_reasons: [3, 8]
+  min_ref_beacons: 8        # beacons with a signal reading before the AP is a reference
+  ref_max_age_s: 120        # reference beacons must be this recent
+  signal_match_db: 6        # |median deauth - beacon signal| at or below: genuine AP
+  signal_mismatch_db: 10    # at or above: spoofed from elsewhere
+  signal_mismatch_full_db: 20
+  mixed_share: 0.25         # this share of burst frames far off = spoofer mixed in
+  genuine_factor: 0.35
+  rejection_reasons: [6, 7]
+  rejection_factor: 0.5
+  long_single_s: 600
+  single_target_factor: 0.5
+  max_findings: 200    # strongest devices reported; the top one notes how many more were dropped
+weights:
+  rate: 45
+  broadcast: 10
+  targets: 15
+  spoofed_bssid: 20
+  handshake: 10
+  signal_mismatch: 25
+min_score: 30
+explanation: "{tx} sent {count} deauthentication/disassociation frames over {span_min} min, up to {peak} within {window_s}s, claiming BSSID {bssid} ({ssid}); during the burst {broadcast_pct}% went to broadcast and {targets} client(s) were targeted directly (e.g. {target_examples}); reason codes {reasons}; {eapol} EAPOL handshake frame(s) followed [{breakdown}]"

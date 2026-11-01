@@ -211,3 +211,172 @@ pub struct FileRow {
     #[ts(type = "number | null")]
     pub size_bytes: Option<u64>,
 }
+
+/// 802.11 frame class for the `wifi` table (contract v2). Control frames
+/// (ACK, RTS, CTS, block-ack) are not rows: they stay in `frames` only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum WifiKind {
+    Beacon,
+    ProbeReq,
+    ProbeResp,
+    Auth,
+    Deauth,
+    AssocReq,
+    AssocResp,
+    ReassocReq,
+    ReassocResp,
+    Disassoc,
+    Action,
+    /// Any other management subtype (ATIM, timing advert, reserved).
+    MgmtOther,
+    /// Data or QoS data with a payload (protected or not).
+    Data,
+    /// Null / QoS null (power-save signalling, no payload).
+    Null,
+    /// Unprotected data frame carrying EAPOL (WPA handshake, 802.1X).
+    Eapol,
+}
+
+impl WifiKind {
+    /// snake_case name, as stored in Parquet and typed in filters.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WifiKind::Beacon => "beacon",
+            WifiKind::ProbeReq => "probe_req",
+            WifiKind::ProbeResp => "probe_resp",
+            WifiKind::Auth => "auth",
+            WifiKind::Deauth => "deauth",
+            WifiKind::AssocReq => "assoc_req",
+            WifiKind::AssocResp => "assoc_resp",
+            WifiKind::ReassocReq => "reassoc_req",
+            WifiKind::ReassocResp => "reassoc_resp",
+            WifiKind::Disassoc => "disassoc",
+            WifiKind::Action => "action",
+            WifiKind::MgmtOther => "mgmt_other",
+            WifiKind::Data => "data",
+            WifiKind::Null => "null",
+            WifiKind::Eapol => "eapol",
+        }
+    }
+
+    pub const ALL: [WifiKind; 15] = [
+        WifiKind::Beacon,
+        WifiKind::ProbeReq,
+        WifiKind::ProbeResp,
+        WifiKind::Auth,
+        WifiKind::Deauth,
+        WifiKind::AssocReq,
+        WifiKind::AssocResp,
+        WifiKind::ReassocReq,
+        WifiKind::ReassocResp,
+        WifiKind::Disassoc,
+        WifiKind::Action,
+        WifiKind::MgmtOther,
+        WifiKind::Data,
+        WifiKind::Null,
+        WifiKind::Eapol,
+    ];
+
+    pub fn parse(s: &str) -> Option<WifiKind> {
+        WifiKind::ALL.into_iter().find(|k| k.as_str() == s)
+    }
+}
+
+/// `wifi` table: one row per 802.11 management or data frame (link types 105
+/// and 127). MAC addresses are lowercase `aa:bb:cc:dd:ee:ff`.
+///
+/// Addresses follow the 802.11 address fields resolved by ToDS/FromDS:
+/// `src` = SA, `dst` = DA, `tx` = TA (differs from SA only on WDS/mesh),
+/// `bssid` = BSSID when the frame carries one (None on 4-address frames).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct WifiRow {
+    #[ts(type = "number")]
+    pub ts: Ts,
+    #[ts(type = "number")]
+    pub frame_no: FrameNo,
+    pub kind: WifiKind,
+    /// Protected Frame bit (payload encrypted).
+    pub protected: bool,
+    pub retry: bool,
+    pub src: Option<String>,
+    pub dst: Option<String>,
+    pub tx: Option<String>,
+    pub bssid: Option<String>,
+    /// Channel number: DS Parameter Set element when present, else from the
+    /// radiotap frequency.
+    pub channel: Option<u16>,
+    /// Radiotap channel frequency.
+    pub freq_mhz: Option<u16>,
+    /// Radiotap antenna signal (dBm).
+    pub signal_dbm: Option<i16>,
+    /// SSID element (beacon, probe request/response, (re)assoc request),
+    /// sanitized to printable text; "" = hidden/wildcard.
+    pub ssid: Option<String>,
+    /// Beacon/probe-response security: "open", "wep", "wpa", "wpa2",
+    /// "wpa3", "wpa2/wpa3", "owe". None on other kinds.
+    pub security: Option<String>,
+    /// Reason code (deauth, disassoc) or status code (auth, assoc/reassoc
+    /// response).
+    pub reason: Option<u16>,
+    /// Sequence number (12 bits).
+    pub seq: Option<u16>,
+    /// 802.11 frame length (without radiotap).
+    pub len: u32,
+}
+
+/// `wifi_aps` view: one row per BSSID that sent a beacon or probe response.
+/// Derived from `wifi` by the index (not written by ingest).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct WifiApRow {
+    pub bssid: String,
+    /// Most frequent non-empty SSID advertised; None = hidden only.
+    pub ssid: Option<String>,
+    /// Most frequent channel.
+    pub channel: Option<u16>,
+    /// Most frequent security value.
+    pub security: Option<String>,
+    #[ts(type = "number")]
+    pub first_ts: Ts,
+    #[ts(type = "number")]
+    pub last_ts: Ts,
+    #[ts(type = "number")]
+    pub beacons: u64,
+    /// All `wifi` rows whose `bssid` is this BSSID.
+    #[ts(type = "number")]
+    pub frames: u64,
+    /// Distinct unicast stations seen in data frames of this BSS.
+    #[ts(type = "number")]
+    pub clients: u64,
+    pub signal_max: Option<i16>,
+    /// Locally administered address bit set (randomized or spoofed).
+    pub randomized: bool,
+    #[ts(type = "number")]
+    pub first_frame: FrameNo,
+}
+
+/// `wifi_clients` view: one row per station (non-AP unicast address that sent
+/// a probe request or a data frame). Derived from `wifi` by the index.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct WifiClientRow {
+    pub mac: String,
+    pub randomized: bool,
+    #[ts(type = "number")]
+    pub first_ts: Ts,
+    #[ts(type = "number")]
+    pub last_ts: Ts,
+    /// Frames this station transmitted.
+    #[ts(type = "number")]
+    pub frames: u64,
+    /// Distinct non-empty SSIDs it probed for, sorted.
+    pub probed_ssids: Vec<String>,
+    /// Distinct BSSIDs it exchanged data or (re)association frames with, sorted.
+    pub bssids: Vec<String>,
+    pub signal_max: Option<i16>,
+    #[ts(type = "number")]
+    pub first_frame: FrameNo,
+}

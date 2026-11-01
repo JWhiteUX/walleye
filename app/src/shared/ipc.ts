@@ -16,6 +16,7 @@ import type { EvidenceRef } from "./bindings/EvidenceRef";
 import type { Finding } from "./bindings/Finding";
 import type { FindingsFilter } from "./bindings/FindingsFilter";
 import type { FrameRef } from "./bindings/FrameRef";
+import type { TimeRange } from "./bindings/TimeRange";
 import type { IngestStatus } from "./bindings/IngestStatus";
 import type { Ioc } from "./bindings/Ioc";
 import type { IocFormat } from "./bindings/IocFormat";
@@ -108,6 +109,9 @@ export const api = {
   query: (req: QueryRequest) => call<Page>("query", { req }),
   timeline: (req: TimelineRequest) => call<Lanes>("timeline", { req }),
   flowFrames: (flow_id: number) => call<FrameRef[]>("flow_frames", { flow_id }),
+  /** 802.11 frames to/from/through a MAC (contract v2), ≤ 10 000, frame order. */
+  deviceFrames: (mac: string, time_range: TimeRange | null = null) =>
+    call<FrameRef[]>("device_frames", { mac, time_range }),
   packet: (frame_no: number) => call<PacketView>("packet", { frame_no }),
   autocomplete: (partial_filter: string, cursor_pos: number) =>
     call<Suggestion[]>("autocomplete", { partial_filter, cursor_pos }),
@@ -138,7 +142,8 @@ export async function pickCaptureFile(): Promise<string | null> {
   if (!isTauri()) {
     // Dev bridge: the capture to open comes from `?capture=<absolute path>`.
     if (devBridge()) return new URLSearchParams(window.location.search).get("capture");
-    return "/mock/office-beacon.pcap";
+    // `?mock=wifi` picks the 802.11 sample, so re-opening keeps the same capture.
+    return new URLSearchParams(window.location.search).get("mock") === "wifi" ? "/mock/lakeside-wifi.pcap" : "/mock/office-beacon.pcap";
   }
   const { open } = await import("@tauri-apps/plugin-dialog");
   const picked = await open({

@@ -27,7 +27,7 @@ use walleye_core::rules::render_template;
 use walleye_core::{Allowlist, FlowId, HttpRow, Reason, Ts};
 
 use crate::beacon::{self, Ev};
-use crate::combine::Hit;
+use crate::combine::{Entity, Hit};
 use crate::rules::{Rule, RuleSet};
 use crate::util::{
     AddrClass, EvAcc, Hosts, clip, display, fmt_num, hash64, normalize_name, ramp, round1,
@@ -397,7 +397,7 @@ pub(crate) fn analyze_tls_port(
         let mut explanation = render_template(&rule.def.explanation, &v);
         push_notes(&mut explanation, &factors);
         out.push(Hit {
-            host: src,
+            entity: Entity::Host(src),
             rule_idx,
             detector_family: "http",
             title: render_template(&rule.def.title, &v),
@@ -503,7 +503,7 @@ pub(crate) fn analyze_post_exfil(
         let mut explanation = render_template(&rule.def.explanation, &v);
         push_notes(&mut explanation, &factors);
         out.push(Hit {
-            host: u.src,
+            entity: Entity::Host(u.src),
             rule_idx,
             detector_family: "http",
             title: render_template(&rule.def.title, &v),

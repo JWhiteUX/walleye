@@ -15,11 +15,12 @@ finding_id: string, title: string,
  */
 detector: string, 
 /**
- * "host" | "pair" | "domain".
+ * "host" | "pair" | "domain" | "device" (802.11 MAC, contract v2).
  */
 entity_type: string, 
 /**
- * IP for host, "src->dst" for pair, name for domain.
+ * IP for host, "src->dst" for pair, name for domain, lowercase MAC for
+ * device.
  */
 entity: string, 
 /**

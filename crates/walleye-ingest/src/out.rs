@@ -1,6 +1,8 @@
 //! Row buffers filled by flow assembly and the protocol parsers.
 
-use walleye_core::{DnsRow, FileRow, FlowId, FlowRow, FrameNo, FrameRow, HttpRow, TlsRow, Ts};
+use walleye_core::{
+    DnsRow, FileRow, FlowId, FlowRow, FrameNo, FrameRow, HttpRow, TlsRow, Ts, WifiRow,
+};
 
 #[derive(Debug, Default)]
 pub struct Out {
@@ -10,6 +12,7 @@ pub struct Out {
     pub http: Vec<HttpRow>,
     pub tls: Vec<TlsRow>,
     pub files: Vec<FileRow>,
+    pub wifi: Vec<WifiRow>,
 }
 
 impl Out {
@@ -20,6 +23,7 @@ impl Out {
             && self.http.is_empty()
             && self.tls.is_empty()
             && self.files.is_empty()
+            && self.wifi.is_empty()
     }
 }
 

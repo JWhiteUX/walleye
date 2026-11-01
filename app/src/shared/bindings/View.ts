@@ -3,4 +3,4 @@
 /**
  * Which table a query reads.
  */
-export type View = "flows" | "dns" | "http" | "tls" | "files" | "frames";
+export type View = "flows" | "dns" | "http" | "tls" | "files" | "frames" | "wifi" | "wifi_aps" | "wifi_clients";

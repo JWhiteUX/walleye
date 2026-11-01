@@ -30,8 +30,9 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let raw = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-    // Ethernet, raw IP, Linux SLL, SLL2, loopback/null, IPv4, IPv6, or the raw value.
-    let link_type = match raw % 9 {
+    // Ethernet, raw IP, Linux SLL, SLL2, loopback/null, IPv4, IPv6, raw IP
+    // (old), 802.11, 802.11 + radiotap, or the raw value.
+    let link_type = match raw % 11 {
         0 => 1,
         1 => 101,
         2 => 113,
@@ -40,6 +41,8 @@ fuzz_target!(|data: &[u8]| {
         5 => 228,
         6 => 229,
         7 => 12,
+        8 => 105,
+        9 => 127,
         _ => raw,
     };
     let bytes = &data[4..];

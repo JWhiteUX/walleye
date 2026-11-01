@@ -22,6 +22,7 @@ use walleye_core::sink::{CHECKPOINT_BYTES, IndexSink};
 
 pub mod capture;
 pub mod decode;
+mod decode_wifi;
 pub mod dns;
 pub mod flow;
 pub mod http;
@@ -30,6 +31,7 @@ pub mod packet;
 mod pipeline;
 pub mod tls;
 pub mod util;
+pub mod wifi;
 pub mod x509;
 
 pub use decode::decode_frame;

@@ -45,10 +45,25 @@ export function defang(v: string): string {
 /**
  * Make invisible and direction-changing characters visible, so a hostile
  * capture can't spoof an indicator (e.g. a U+202E right-to-left override in a
- * domain). Control, zero-width, bidi and BOM characters become `\u{xxxx}`.
+ * domain, or an SSID "CorpNet" + U+E0041 TAG LATIN CAPITAL A posing as
+ * "CorpNet"). Each such code point becomes `\u{xxxx}` (by code point, so an
+ * astral character is one escape, not two UTF-16 halves):
+ *
+ * - every control (Cc), format (Cf), line (Zl) and paragraph (Zp) separator:
+ *   bidi controls, zero-width characters, BOM, soft hyphen, tag characters\u2026
+ * - the whole tag block U+E0000\u2013E007F (including unassigned slots)
+ * - U+2060\u2013206F (including the unassigned U+2065)
+ * - Hangul fillers U+115F, U+1160, U+3164, U+FFA0 and Braille blank U+2800 (render as blank)
+ * - combining grapheme joiner U+034F
+ * - variation selectors U+FE00\u2013FE0F, U+E0100\u2013E01EF
+ * - Mongolian free variation selectors U+180B\u2013180D (and U+180E, Cf)
+ *
+ * Keep in sync with `walleye_core::text::is_invisible` (crates/walleye-core/src/text.rs), used by ingest and the report.
  */
-// eslint-disable-next-line no-control-regex
-const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb]/g;
+const INVISIBLE =
+  // Combining marks (CGJ, the selectors) sit outside the bracket class:
+  // \p{Variation_Selector} = U+180B\u2013180D, U+180F, U+FE00\u2013FE0F, U+E0100\u2013E01EF.
+  /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u{E0000}-\u{E007F}\u2060-\u206f\u115f\u1160\u3164\uffa0\u180e\u2800]|\p{Variation_Selector}|\u034f/gu;
 export function visible(v: string): string {
   return v.replace(INVISIBLE, (c) => `\\u{${c.codePointAt(0)!.toString(16)}}`);
 }

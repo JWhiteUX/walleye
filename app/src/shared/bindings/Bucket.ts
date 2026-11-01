@@ -7,4 +7,22 @@ export type Bucket = {
 /**
  * Bucket start.
  */
-t: number, dns: number, tls: number, http: number, bulk: number, other: number, };
+t: number, dns: number, tls: number, http: number, bulk: number, other: number, 
+/**
+ * Device lanes (802.11 captures) count **frames**, not flow starts, in
+ * these four fields (absent on host lanes):
+ * management frames other than deauth/disassoc and probes.
+ */
+wifi_mgmt?: number, 
+/**
+ * Probe requests and responses.
+ */
+wifi_probe?: number, 
+/**
+ * Data, null and EAPOL frames.
+ */
+wifi_data?: number, 
+/**
+ * Deauthentication and disassociation frames.
+ */
+wifi_deauth?: number, };

@@ -9,6 +9,7 @@ const NUM = /^(==|!=|>=|<=|>|<)?\s*(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|us|ms|s|m|h)?$/
 const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?$/;
 const IPV6 = /^[0-9a-fA-F:]*:[0-9a-fA-F:.]*(?:\/\d{1,3})?$/;
 const IDENT = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+const MAC = /^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$/;
 
 export type Composed = { ok: true; text: string } | { ok: false; error: string };
 
@@ -42,6 +43,18 @@ export function composePredicate(field: string, ty: FieldType, raw: string): Com
       const neg = input.startsWith("!=");
       const v = (neg ? input.slice(2) : input.replace(/^==/, "")).trim();
       if (!IPV4.test(v) && !IPV6.test(v)) return { ok: false, error: "Use an IP address or CIDR." };
+      return { ok: true, text: `${field} ${neg ? "!=" : "=="} ${v}` };
+    }
+    case "mac":
+    case "mac_list": {
+      const neg = input.startsWith("!=");
+      const v = (neg ? input.slice(2) : input.replace(/^==/, "")).trim().toLowerCase();
+      if (/[*?]/.test(v)) {
+        if (neg) return { ok: false, error: "Negated globs are not supported here; edit the filter bar instead." };
+        if (!/^[0-9a-f:*?]+$/.test(v)) return { ok: false, error: "Use a MAC address like 02:00:5e:00:53:01, or a glob like 02:00:5e:*." };
+        return { ok: true, text: `${field} ~ ${quote(v)}` };
+      }
+      if (!MAC.test(v)) return { ok: false, error: "Use a MAC address like 02:00:5e:00:53:01." };
       return { ok: true, text: `${field} ${neg ? "!=" : "=="} ${v}` };
     }
     case "proto": {

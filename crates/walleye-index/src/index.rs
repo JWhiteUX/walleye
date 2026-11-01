@@ -18,11 +18,13 @@ use duckdb::{Connection, params_from_iter};
 use serde::{Deserialize, Serialize};
 use walleye_core::{
     ApiError, CaptureRow, DnsRow, ErrorCode, Finding, FlowRow, FrameRow, HttpRow, Ioc, TlsRow,
+    WifiRow,
+    backend::DEVICE_FRAMES_CAP,
     error::ApiResult,
     fields::{FieldDef, FieldType},
     ipc::{
-        Bucket, FindingsFilter, FrameRef, Lane, Lanes, Page, QueryRequest, RowSet, Suggestion,
-        SuggestionKind, TimeRange, TimelineRequest, View,
+        Bucket, FindingsFilter, FrameRef, Lane, LaneKind, Lanes, Page, QueryRequest, RowSet,
+        Suggestion, SuggestionKind, TimeRange, TimelineRequest, View,
     },
     sink::{DetectSource, ResultSink},
 };
@@ -30,6 +32,7 @@ use walleye_core::{
 use crate::{
     filter::{self, CompletionKind, Param},
     schema::{self, ALL_TABLES, Tab},
+    wifi,
     writer::{MANIFEST, Manifest, db, harden, io_ctx, sql_path, write_atomic, write_table},
 };
 
@@ -42,6 +45,13 @@ const MAX_CURSOR_LEN: usize = 16 * 1024;
 const MAX_V6_SET: usize = 10_000;
 const MAX_BUCKETS: u64 = 2_000;
 const BULK_BYTES: i64 = 1 << 20;
+/// `wifi_aps` / `wifi_clients` are materialized into in-memory tables at
+/// open when `wifi` has at least this many rows; below it they stay plain
+/// views (cheap to recompute). See `create_wifi_views`.
+const MATERIALIZE_MIN_ROWS: i64 = 50_000;
+/// Read-side DuckDB memory cap and spill directory (inside the index dir).
+const READ_MEMORY_LIMIT: &str = "2GB";
+const READ_SPILL_DIR: &str = ".spill-read";
 
 pub struct Index {
     dir: PathBuf,
@@ -50,6 +60,11 @@ pub struct Index {
     base: Mutex<Connection>,
     pool: Mutex<Vec<Connection>>,
     top_values: Mutex<HashMap<String, Vec<(String, u64)>>>,
+    /// Timeline lanes are 802.11 devices (CONTRACTS §11.2): link type 105/127,
+    /// or `wifi` rows and no flows.
+    device_lanes: bool,
+    /// The capture has at least one flow (open-network 802.11 captures can).
+    has_flows: bool,
 }
 
 struct Lease<'a> {
@@ -84,22 +99,30 @@ fn view_tab(v: View) -> Tab {
         View::Tls => Tab::Tls,
         View::Files => Tab::Files,
         View::Frames => Tab::Frames,
+        View::Wifi => Tab::Wifi,
+        View::WifiAps => Tab::WifiAps,
+        View::WifiClients => Tab::WifiClients,
     }
 }
 
 fn keys(v: View) -> &'static [&'static str] {
     match v {
         View::Flows => &["flow_id"],
-        View::Frames => &["frame_no"],
-        _ => &["flow_id", "frame_no"],
+        View::Frames | View::Wifi => &["frame_no"],
+        View::WifiAps => &["bssid"],
+        View::WifiClients => &["mac"],
+        View::Dns | View::Http | View::Tls | View::Files => &["flow_id", "frame_no"],
     }
 }
 
-fn default_sort(v: View) -> &'static str {
+/// Default sort column and direction (CONTRACTS §11.2 for the 802.11 views).
+fn default_sort(v: View) -> (&'static str, bool) {
     match v {
-        View::Flows => "ts_start",
-        View::Frames => "frame_no",
-        _ => "ts",
+        View::Flows => ("ts_start", false),
+        View::Frames => ("frame_no", false),
+        View::WifiAps => ("beacons", true),
+        View::WifiClients => ("frames", true),
+        View::Wifi | View::Dns | View::Http | View::Tls | View::Files => ("ts", false),
     }
 }
 
@@ -117,7 +140,8 @@ struct Cursor {
     q: String,
     keyset: bool,
     s: serde_json::Value,
-    k: Vec<i64>,
+    /// Key column values (integers, or MAC text on `wifi_aps`/`wifi_clients`).
+    k: Vec<serde_json::Value>,
     skip: u64,
     total: Option<u64>,
 }
@@ -161,7 +185,10 @@ fn decode_cursor(s: &str, q: &str) -> ApiResult<Cursor> {
             | serde_json::Value::Number(_)
             | serde_json::Value::String(_)
     );
-    if !scalar || (c.keyset && c.k.is_empty()) || c.k.len() > 2 {
+    let keys_ok =
+        c.k.iter()
+            .all(|v| v.is_i64() || v.is_u64() || v.is_string());
+    if !scalar || !keys_ok || (c.keyset && c.k.is_empty()) || c.k.len() > 2 {
         return Err(invalid("bad cursor"));
     }
     Ok(c)
@@ -269,18 +296,37 @@ impl Index {
         let dir = fs::canonicalize(index_dir).map_err(|e| io_ctx("index dir", e))?;
         let conn = Connection::open_in_memory().map_err(db)?;
         harden(&conn)?;
+        // Bounded memory (security review L2): the materialized 802.11
+        // aggregates and every query share this in-memory database. 2 GB
+        // matches the writer's budget: a fixed cap is predictable on any
+        // machine, far above the working set measured at 2 M wifi rows
+        // (open + queries well under 1 GB), and bigger intermediates spill
+        // to `<index>/.spill-read` instead of growing without bound. That
+        // dir is inside `allowed_directories` (set below, before
+        // `lock_configuration`).
+        conn.execute_batch(&format!(
+            "SET memory_limit = '{READ_MEMORY_LIMIT}'; SET temp_directory = {};",
+            sql_path(&dir.join(READ_SPILL_DIR))
+        ))
+        .map_err(db)?;
         conn.execute_batch(filter::IP_NUM_MACRO).map_err(db)?;
         // Parquet footers are cached across queries.
         let _ = conn.execute_batch("SET enable_object_cache = true;");
-        let idx = Index {
+        let mut idx = Index {
             dir: dir.clone(),
             capture: manifest.capture.clone(),
             manifest: Mutex::new(manifest),
             base: Mutex::new(conn),
             pool: Mutex::new(Vec::new()),
             top_values: Mutex::new(HashMap::new()),
+            device_lanes: false,
+            has_flows: false,
         };
         idx.create_views()?;
+        let wifi_rows = idx.create_wifi_views()?;
+        idx.has_flows = idx.count_rows("flows")? > 0;
+        idx.device_lanes = walleye_core::is_wifi_link_type(idx.capture.link_type)
+            || (wifi_rows > 0 && !idx.has_flows);
         // Sandbox: only the index directory is readable/writable, and the
         // configuration cannot be changed afterwards.
         {
@@ -327,6 +373,44 @@ impl Index {
             c.execute_batch(&sql).map_err(db)?;
         }
         Ok(())
+    }
+
+    /// Creates `wifi_aps` and `wifi_clients` over `wifi` (CONTRACTS §11.2)
+    /// and returns the `wifi` row count. Large captures get the aggregates
+    /// materialized once, so paging and counting do not re-run the GROUP BYs.
+    fn create_wifi_views(&self) -> ApiResult<i64> {
+        let n = self.count_rows("wifi")?;
+        let c = self
+            .base
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let kind = if n >= MATERIALIZE_MIN_ROWS {
+            "TABLE"
+        } else {
+            "VIEW"
+        };
+        for (t, body) in [
+            (Tab::WifiAps, wifi::aps_select()),
+            (Tab::WifiClients, wifi::clients_select()),
+        ] {
+            c.execute_batch(&format!(
+                "CREATE OR REPLACE {kind} {} AS SELECT {} FROM ({body});",
+                t.name(),
+                t.column_list()
+            ))
+            .map_err(db)?;
+        }
+        Ok(n)
+    }
+
+    /// `count(*)` of a fixed table name (never user text).
+    fn count_rows(&self, table: &'static str) -> ApiResult<i64> {
+        let c = self
+            .base
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        c.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+            .map_err(db)
     }
 
     fn conn(&self) -> ApiResult<Lease<'_>> {
@@ -409,12 +493,21 @@ impl Index {
         let c = self.compile_filter(&req.filter, req.view)?;
         let mut sql = c.sql;
         let mut params = c.params;
+        if req.view.is_wifi() && !(req.hosts.is_empty() && req.flow_ids.is_empty()) {
+            return Err(invalid(
+                "hosts and flow_ids do not apply to 802.11 views; filter with `mac X` instead",
+            ));
+        }
         if let Some(tr) = &req.time_range {
             if tr.end < tr.start {
                 return Err(invalid("time_range end is before start"));
             }
             if req.view == View::Flows {
                 sql.push_str(" AND (ts_start < ? AND ts_end >= ?)");
+                params.extend([Param::Int(tr.end), Param::Int(tr.start)]);
+            } else if matches!(req.view, View::WifiAps | View::WifiClients) {
+                // Devices active at any point inside the range.
+                sql.push_str(" AND (first_ts < ? AND last_ts >= ?)");
                 params.extend([Param::Int(tr.end), Param::Int(tr.start)]);
             } else {
                 sql.push_str(" AND (ts >= ? AND ts < ?)");
@@ -480,7 +573,7 @@ impl Index {
                     })?;
                 (c, s.desc)
             }
-            None => (default_sort(req.view), false),
+            None => default_sort(req.view),
         };
         let is_list = cols
             .iter()
@@ -529,11 +622,14 @@ impl Index {
             if c.keyset {
                 // Keys at or after the cursor's key tuple (ties are skipped by OFFSET).
                 let (kp, key_params) = match (ks, c.k.as_slice()) {
-                    ([k1], [a]) => (format!("(\"{k1}\" >= ?)"), vec![Param::Int(*a)]),
-                    ([k1, k2], [a, b]) => (
-                        format!("(\"{k1}\" > ? OR (\"{k1}\" = ? AND \"{k2}\" >= ?))"),
-                        vec![Param::Int(*a), Param::Int(*a), Param::Int(*b)],
-                    ),
+                    ([k1], [a]) => (format!("(\"{k1}\" >= ?)"), vec![json_param(a)?]),
+                    ([k1, k2], [a, b]) => {
+                        let (a, b) = (json_param(a)?, json_param(b)?);
+                        (
+                            format!("(\"{k1}\" > ? OR (\"{k1}\" = ? AND \"{k2}\" >= ?))"),
+                            vec![a.clone(), a, b],
+                        )
+                    }
                     _ => return Err(invalid("bad cursor")),
                 };
                 if c.s.is_null() {
@@ -569,6 +665,9 @@ impl Index {
             View::Tls => RowSet::Tls(Vec::new()),
             View::Files => RowSet::Files(Vec::new()),
             View::Frames => RowSet::Frames(Vec::new()),
+            View::Wifi => RowSet::Wifi(Vec::new()),
+            View::WifiAps => RowSet::WifiAps(Vec::new()),
+            View::WifiClients => RowSet::WifiClients(Vec::new()),
         };
         while let Some(r) = rows.next().map_err(db)? {
             match &mut data {
@@ -578,6 +677,9 @@ impl Index {
                 RowSet::Tls(v) => v.push(schema::tls_from(r)?),
                 RowSet::Files(v) => v.push(schema::file_from(r)?),
                 RowSet::Frames(v) => v.push(schema::frame_from(r)?),
+                RowSet::Wifi(v) => v.push(schema::wifi_from(r)?),
+                RowSet::WifiAps(v) => v.push(schema::wifi_ap_from(r)?),
+                RowSet::WifiClients(v) => v.push(schema::wifi_client_from(r)?),
             }
         }
         drop(rows);
@@ -612,13 +714,15 @@ impl Index {
                     total,
                 }
             } else {
-                let tuple = |r: &serde_json::Value| -> ApiResult<(serde_json::Value, Vec<i64>)> {
+                type Tuple = (serde_json::Value, Vec<serde_json::Value>);
+                let tuple = |r: &serde_json::Value| -> ApiResult<Tuple> {
                     let s = r.get(sort_col).cloned().unwrap_or(serde_json::Value::Null);
                     let k = ks
                         .iter()
                         .map(|k| {
                             r.get(*k)
-                                .and_then(serde_json::Value::as_i64)
+                                .filter(|v| v.is_i64() || v.is_u64() || v.is_string())
+                                .cloned()
                                 .ok_or_else(|| ApiError::internal("key"))
                         })
                         .collect::<ApiResult<Vec<_>>>()?;
@@ -664,8 +768,30 @@ impl Index {
         })
     }
 
+    /// True when timeline lanes are 802.11 devices (`Lanes.lane_kind = device`).
+    pub fn device_lanes(&self) -> bool {
+        self.device_lanes
+    }
+
     pub fn timeline(&self, req: &TimelineRequest, findings: &[Finding]) -> ApiResult<Lanes> {
-        let c = self.compile_filter(&req.filter, View::Flows)?;
+        // Device lanes take the filter against `wifi`. An 802.11 capture of
+        // an open network also has flows: a flow-only filter (`host X`,
+        // `dns.query ~ …`) then gives host lanes for this request instead of
+        // failing the whole timeline. Otherwise the wifi error stands.
+        let (device, c) = if self.device_lanes {
+            match self.compile_filter(&req.filter, View::Wifi) {
+                Ok(c) => (true, c),
+                Err(wifi_err) => match self
+                    .has_flows
+                    .then(|| self.compile_filter(&req.filter, View::Flows))
+                {
+                    Some(Ok(c)) => (false, c),
+                    _ => return Err(wifi_err),
+                },
+            }
+        } else {
+            (false, self.compile_filter(&req.filter, View::Flows)?)
+        };
         let cap = &self.capture;
         let range = req.time_range.unwrap_or(TimeRange {
             start: cap.first_ts,
@@ -682,17 +808,37 @@ impl Index {
         let bucket_us = i64::try_from(bucket_ms.saturating_mul(1000))
             .map_err(|_| invalid("bucket_ms too large"))?;
         let max_lanes = i64::from(req.max_lanes.clamp(1, 1000));
-        let sql = format!(
-            "WITH f AS (SELECT src_ip, ts_start, CASE WHEN bytes_up + bytes_down >= ? THEN 3 \
-               WHEN app_proto = 'dns' THEN 0 WHEN app_proto = 'tls' THEN 1 WHEN app_proto = 'http' THEN 2 ELSE 4 END AS k \
-               FROM flows WHERE {} AND ts_start >= ? AND ts_start < ?), \
-             top AS (SELECT src_ip FROM f GROUP BY src_ip ORDER BY count(*) DESC, src_ip LIMIT ?) \
-             SELECT top.src_ip AS lane, CAST((CAST(f.ts_start AS HUGEINT) - ?) // ? AS BIGINT) AS bi, f.k, count(*) AS n \
-             FROM f LEFT JOIN top ON f.src_ip = top.src_ip GROUP BY ALL",
-            c.sql
-        );
-        let mut params = vec![Param::Int(BULK_BYTES)];
-        params.extend(c.params);
+        let (sql, mut params) = if device {
+            // Device lanes: keyed by transmitter, counting frames per kind.
+            (
+                format!(
+                    "WITH f AS (SELECT tx AS lane_key, ts AS t0, {} AS k \
+                       FROM wifi WHERE {} AND ts >= ? AND ts < ?), \
+                     top AS (SELECT lane_key FROM f WHERE lane_key IS NOT NULL GROUP BY lane_key \
+                       ORDER BY count(*) DESC, lane_key LIMIT ?) \
+                     SELECT top.lane_key AS lane, CAST((CAST(f.t0 AS HUGEINT) - ?) // ? AS BIGINT) AS bi, f.k, count(*) AS n \
+                     FROM f LEFT JOIN top ON f.lane_key = top.lane_key GROUP BY ALL",
+                    wifi::DEVICE_KIND_CASE,
+                    c.sql
+                ),
+                c.params,
+            )
+        } else {
+            let mut p = vec![Param::Int(BULK_BYTES)];
+            p.extend(c.params);
+            (
+                format!(
+                    "WITH f AS (SELECT src_ip, ts_start, CASE WHEN bytes_up + bytes_down >= ? THEN 3 \
+                       WHEN app_proto = 'dns' THEN 0 WHEN app_proto = 'tls' THEN 1 WHEN app_proto = 'http' THEN 2 ELSE 4 END AS k \
+                       FROM flows WHERE {} AND ts_start >= ? AND ts_start < ?), \
+                     top AS (SELECT src_ip FROM f GROUP BY src_ip ORDER BY count(*) DESC, src_ip LIMIT ?) \
+                     SELECT top.src_ip AS lane, CAST((CAST(f.ts_start AS HUGEINT) - ?) // ? AS BIGINT) AS bi, f.k, count(*) AS n \
+                     FROM f LEFT JOIN top ON f.src_ip = top.src_ip GROUP BY ALL",
+                    c.sql
+                ),
+                p,
+            )
+        };
         params.extend([
             Param::Int(range.start),
             Param::Int(range.end),
@@ -716,20 +862,37 @@ impl Index {
             e.0 += u64::try_from(n).unwrap_or(0);
             // Hostile captures can put timestamps anywhere in i64.
             let t = range.start.saturating_add(bi.saturating_mul(bucket_us));
-            let b = e.1.entry(t).or_insert_with(|| Bucket {
-                t,
-                ..Default::default()
+            let b = e.1.entry(t).or_insert_with(|| {
+                let z = device.then_some(0);
+                Bucket {
+                    t,
+                    wifi_mgmt: z,
+                    wifi_probe: z,
+                    wifi_data: z,
+                    wifi_deauth: z,
+                    ..Default::default()
+                }
             });
-            match k {
-                0 => b.dns += n32,
-                1 => b.tls += n32,
-                2 => b.http += n32,
-                3 => b.bulk += n32,
-                _ => b.other += n32,
-            }
+            let slot = match (device, k) {
+                (true, 0) => b.wifi_mgmt.get_or_insert(0),
+                (true, 1) => b.wifi_probe.get_or_insert(0),
+                (true, 2) => b.wifi_data.get_or_insert(0),
+                (true, _) => b.wifi_deauth.get_or_insert(0),
+                (false, 0) => &mut b.dns,
+                (false, 1) => &mut b.tls,
+                (false, 2) => &mut b.http,
+                (false, 3) => &mut b.bulk,
+                (false, _) => &mut b.other,
+            };
+            *slot = slot.saturating_add(n32);
         }
         let mut max_score: HashMap<&str, f64> = HashMap::new();
-        for f in findings {
+        // Device lanes take only `device` findings (keyed by MAC); host lanes
+        // take everything else.
+        for f in findings
+            .iter()
+            .filter(|f| (f.entity_type == "device") == device)
+        {
             let e = max_score.entry(f.entity.as_str()).or_insert(f.score);
             *e = e.max(f.score);
         }
@@ -759,6 +922,11 @@ impl Index {
         Ok(Lanes {
             bucket_ms,
             range,
+            lane_kind: if device {
+                LaneKind::Device
+            } else {
+                LaneKind::Host
+            },
             lanes: out,
         })
     }
@@ -795,6 +963,70 @@ impl Index {
             Some(r) => schema::frame_from(r),
             None => Err(ApiError::not_found(format!("frame {frame_no}"))),
         }
+    }
+
+    /// 802.11 frames where `mac` is src, dst, tx or bssid, in frame order,
+    /// inside `time_range` when given; at most `DEVICE_FRAMES_CAP`, earliest
+    /// first (`Backend::device_frames`, CONTRACTS §11.2).
+    pub fn device_frames(
+        &self,
+        mac: &str,
+        time_range: Option<TimeRange>,
+    ) -> ApiResult<Vec<FrameRef>> {
+        let mac =
+            walleye_core::mac::parse_mac(mac).ok_or_else(|| invalid("mac: not a MAC address"))?;
+        let cols: Vec<String> = Tab::Wifi
+            .columns()
+            .iter()
+            .map(|(c, _)| format!("w.\"{c}\""))
+            .collect();
+        // Pick the <= cap wifi frames first, then join `frames` on those
+        // frame numbers only (a join over the whole frames table per call is
+        // wasted work on large captures).
+        let mut sql = String::from(
+            "WITH w AS (SELECT * FROM wifi WHERE (src = ? OR dst = ? OR tx = ? OR bssid = ?)",
+        );
+        let mut params: Vec<Param> = (0..4).map(|_| Param::Str(mac.clone())).collect();
+        if let Some(tr) = time_range {
+            if tr.end < tr.start {
+                return Err(invalid("time_range end is before start"));
+            }
+            sql.push_str(" AND ts >= ? AND ts < ?");
+            params.extend([Param::Int(tr.start), Param::Int(tr.end)]);
+        }
+        // The small side (<= cap rows) builds the hash table; DuckDB pushes
+        // its key range into the `frames` scan, which skips row groups.
+        sql.push_str(&format!(
+            " ORDER BY frame_no LIMIT ?) \
+             SELECT {}, fr.caplen, fr.wirelen, fr.payload_len FROM w \
+             LEFT JOIN frames fr ON fr.frame_no = w.frame_no ORDER BY w.frame_no",
+            cols.join(", ")
+        ));
+        params.push(Param::Int(DEVICE_FRAMES_CAP as i64));
+        let conn = self.conn()?;
+        let mut st = conn.prepare(&sql).map_err(|e| map_query_err(&e))?;
+        let mut rows = st
+            .query(params_from_iter(params.iter()))
+            .map_err(|e| map_query_err(&e))?;
+        let n = Tab::Wifi.columns().len();
+        let mut out = Vec::new();
+        while let Some(r) = rows.next().map_err(db)? {
+            let w = schema::wifi_from(r)?;
+            let caplen: Option<u32> = r.get(n).map_err(db)?;
+            let wirelen: Option<u32> = r.get(n + 1).map_err(db)?;
+            let payload_len: Option<u32> = r.get(n + 2).map_err(db)?;
+            out.push(FrameRef {
+                summary: wifi::wifi_summary(&w),
+                frame_no: w.frame_no,
+                ts: w.ts,
+                caplen: caplen.unwrap_or(w.len),
+                wirelen: wirelen.unwrap_or(w.len),
+                direction: None,
+                tcp_flags: None,
+                payload_len: payload_len.unwrap_or(0),
+            });
+        }
+        Ok(out)
     }
 
     pub fn flow_frames(&self, flow_id: u64) -> ApiResult<Vec<FrameRef>> {
@@ -840,7 +1072,7 @@ impl Index {
             return Ok(v.clone());
         }
         let sql = format!(
-            "SELECT v, count(*) AS n FROM ({source_sql}) WHERE v IS NOT NULL AND starts_with(lower(v), lower(?)) \
+            "SELECT v, count(*) AS n FROM ({source_sql}) WHERE v IS NOT NULL AND v <> '' AND starts_with(lower(v), lower(?)) \
              GROUP BY v ORDER BY n DESC, v LIMIT 20"
         );
         let conn = self.conn()?;
@@ -875,12 +1107,25 @@ impl Index {
                 "SELECT CAST(dst_port AS VARCHAR) AS v FROM flows".into(),
                 "port",
             )),
+            CompletionKind::Mac => Some((
+                "mac".into(),
+                "SELECT tx AS v FROM wifi UNION ALL SELECT bssid AS v FROM wifi WHERE bssid IS DISTINCT FROM tx"
+                    .into(),
+                "mac",
+            )),
             CompletionKind::Value(f) => value_source(f).map(|s| (f.name.to_string(), s, f.name)),
             _ => None,
         };
         if let Some((key, src, detail)) = source {
             let quoted_field = matches!(&ctx.kind, CompletionKind::Value(f) if matches!(f.ty, FieldType::Str | FieldType::StrList));
             for (v, n) in self.values(&key, &src, &ctx.word)? {
+                // Fixed values (e.g. `wifi.kind`) are already suggested.
+                if out
+                    .iter()
+                    .any(|x| x.kind == SuggestionKind::Value && x.label == v)
+                {
+                    continue;
+                }
                 let insert = if quoted_field || ctx.quoted {
                     filter::render_value(&v, ctx.quoted)
                 } else {
@@ -1021,8 +1266,12 @@ impl Index {
 fn value_source(f: &FieldDef) -> Option<String> {
     let table = filter::table_name(f.table);
     match f.ty {
-        FieldType::Str | FieldType::Ip => Some(format!("SELECT {} AS v FROM {table}", f.sql)),
-        FieldType::StrList => Some(format!("SELECT unnest({}) AS v FROM {table}", f.sql)),
+        FieldType::Str | FieldType::Ip | FieldType::Mac => {
+            Some(format!("SELECT {} AS v FROM {table}", f.sql))
+        }
+        FieldType::StrList | FieldType::MacList => {
+            Some(format!("SELECT unnest({}) AS v FROM {table}", f.sql))
+        }
         _ => None,
     }
 }
@@ -1039,6 +1288,9 @@ fn truncate(d: &mut RowSet, n: usize) {
         RowSet::Tls(v) => v.truncate(n),
         RowSet::Files(v) => v.truncate(n),
         RowSet::Frames(v) => v.truncate(n),
+        RowSet::Wifi(v) => v.truncate(n),
+        RowSet::WifiAps(v) => v.truncate(n),
+        RowSet::WifiClients(v) => v.truncate(n),
     }
 }
 
@@ -1050,6 +1302,9 @@ fn rows_json(d: &RowSet) -> ApiResult<Vec<serde_json::Value>> {
         RowSet::Tls(v) => serde_json::to_value(v),
         RowSet::Files(v) => serde_json::to_value(v),
         RowSet::Frames(v) => serde_json::to_value(v),
+        RowSet::Wifi(v) => serde_json::to_value(v),
+        RowSet::WifiAps(v) => serde_json::to_value(v),
+        RowSet::WifiClients(v) => serde_json::to_value(v),
     }
     .map_err(|e| ApiError::internal(e.to_string()))?;
     match v {
@@ -1073,6 +1328,9 @@ impl DetectSource for Index {
     }
     fn for_each_tls(&self, f: &mut dyn FnMut(&TlsRow)) -> ApiResult<()> {
         self.stream(Tab::Tls, "ts, flow_id, frame_no", schema::tls_from, f)
+    }
+    fn for_each_wifi(&self, f: &mut dyn FnMut(&WifiRow)) -> ApiResult<()> {
+        self.stream(Tab::Wifi, "ts, frame_no", schema::wifi_from, f)
     }
 }
 
@@ -1155,6 +1413,27 @@ mod tests {
             .expect_err("locked");
         assert!(e.to_string().to_lowercase().contains("lock"), "{e}");
         assert!(c.execute_batch("INSTALL httpfs").is_err());
+        // Bounded memory, spilling inside the index dir (review L2).
+        let (mem, tmp): (String, String) = c
+            .query_row(
+                "SELECT current_setting('memory_limit'), current_setting('temp_directory')",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("settings");
+        assert!(mem.contains("GiB") || mem.contains("GB"), "{mem}");
+        assert!(
+            Path::new(&tmp).starts_with(idx.dir()) && tmp.ends_with(READ_SPILL_DIR),
+            "{tmp}"
+        );
+        let e = c
+            .execute_batch("SET memory_limit = '64GB'")
+            .expect_err("locked");
+        assert!(e.to_string().to_lowercase().contains("lock"), "{e}");
+        let e = c
+            .execute_batch("SET temp_directory = '/tmp'")
+            .expect_err("locked");
+        assert!(e.to_string().to_lowercase().contains("lock"), "{e}");
         c.execute_batch("SELECT count(*) FROM flows")
             .expect("own files readable");
         drop(c);

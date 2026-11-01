@@ -249,6 +249,9 @@ fn view_text(v: View) -> &'static str {
         View::Tls => "tls",
         View::Files => "files",
         View::Frames => "frames",
+        View::Wifi => "wifi",
+        View::WifiAps => "wifi_aps",
+        View::WifiClients => "wifi_clients",
     }
 }
 
@@ -717,20 +720,8 @@ pub fn sanitize(s: &str, max_chars: usize) -> String {
             out.push('…');
             break;
         }
-        // Same set as the UI's `visible()` (app/src/shared/format.ts); keep
-        // the two in sync.
-        let invisible = c.is_control()
-            || matches!(
-                c,
-                '\u{00ad}'
-                    | '\u{061c}'
-                    | '\u{180e}'
-                    | '\u{200b}'..='\u{200f}'
-                    | '\u{2028}'..='\u{202e}'
-                    | '\u{2060}'..='\u{206f}'
-                    | '\u{feff}'
-                    | '\u{fff9}'..='\u{fffb}'
-            );
+        // Same set as ingest and the UI's `visible()` (walleye_core::text).
+        let invisible = c.is_control() || walleye_core::text::is_invisible(c);
         if invisible {
             out.push_str(&format!("\\u{{{:x}}}", c as u32));
         } else {
@@ -900,4 +891,20 @@ pub fn decode_timeline_png(b64: &str) -> ApiResult<Vec<u8>> {
                 "timeline snapshot is not base64",
             )
         })
+}
+
+#[cfg(test)]
+mod sanitize_tests {
+    use super::sanitize;
+
+    #[test]
+    fn escapes_the_shared_invisible_set() {
+        // Tag character, Hangul filler, variation selector: a look-alike SSID
+        // must not read as the real name in the report.
+        assert_eq!(
+            sanitize("CorpNet\u{e0041}\u{3164}\u{fe0f}", 100),
+            "CorpNet\\u{e0041}\\u{3164}\\u{fe0f}"
+        );
+        assert_eq!(sanitize("Café 😀", 100), "Café 😀");
+    }
 }

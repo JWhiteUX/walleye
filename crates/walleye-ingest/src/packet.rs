@@ -86,7 +86,16 @@ fn clamp_segment(p: &[u8]) -> &[u8] {
 /// Extract addresses, ports and payload. `None` for non-IP frames, IP
 /// fragments and frames too short to carry their transport header.
 pub fn parse_packet(link_type: u32, data: &[u8]) -> Option<PacketInfo<'_>> {
-    let pkt = slice_link(link_type, data)?;
+    from_sliced(slice_link(link_type, data)?)
+}
+
+/// Same as [`parse_packet`] for a payload whose ethertype came from another
+/// layer (802.11 LLC/SNAP).
+pub fn parse_packet_ether(ethertype: u16, data: &[u8]) -> Option<PacketInfo<'_>> {
+    from_sliced(LaxSlicedPacket::from_ether_type(EtherType(ethertype), data))
+}
+
+fn from_sliced(pkt: LaxSlicedPacket<'_>) -> Option<PacketInfo<'_>> {
     let (src, dst, ip_payload) = match pkt.net.as_ref()? {
         LaxNetSlice::Ipv4(v4) => {
             let h = v4.header();

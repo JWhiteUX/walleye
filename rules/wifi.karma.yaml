@@ -1,0 +1,22 @@
+# Karma / MANA access point (CONTRACTS §11.3): one BSSID answering probe
+# requests for many different SSIDs, so clients auto-join it believing it is
+# a remembered network. Only SSIDs that neither this BSSID nor its sequential
+# siblings beacon are counted, so multi-SSID enterprise APs (one BSSID per
+# SSID, each answering for its own) stay quiet. One BSSID beaconing
+# min_ssids or more SSIDs ("loud mode") counts too.
+id: wifi.karma
+title: "Karma-style access point {bssid} answering for {ssids} networks"
+detector: wifi_karma
+attack_technique: T1557
+params:
+  min_ssids: 10        # distinct probe-response-only SSIDs before anything scores
+  ssids_full: 30
+  echo_window_s: 5     # response this soon after the client probed for that SSID
+  max_findings: 200    # strongest devices reported; the top one notes how many more were dropped
+weights:
+  ssids: 50
+  echo: 25
+  open: 15
+  randomized: 10
+min_score: 30
+explanation: "{bssid} answered probe requests for {ssids} different networks it does not beacon, e.g. {examples}; {echoed} of them within {echo_window_s}s of a client asking for that exact name, and {open_pct}% of its {responses} responses advertised an open network [{breakdown}]"

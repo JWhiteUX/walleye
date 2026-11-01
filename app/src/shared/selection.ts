@@ -6,6 +6,7 @@
 //   table row           -> selectFlows([id]) (+ selectFrame(first_frame))
 //   packet list row     -> selectFrame
 //   queue evidence link -> applyEvidence
+//   wifi row / device lane -> selectDevice (802.11 captures; contract v2)
 //   filter bar submit   -> setFilter
 import { create } from "zustand";
 import type { Evidence } from "./bindings/Evidence";
@@ -19,6 +20,13 @@ export interface Selection {
   frame_no: number | null;
   /** Committed filter text (what the filter bar last submitted). */
   filter: string;
+  /**
+   * Focused 802.11 device (lowercase MAC), set by Wi-Fi table rows, device
+   * lanes and device findings. Drives the packet list when no flow is
+   * selected (`api.deviceFrames`). It never filters the table or timeline:
+   * filter by MAC with `mac X` in the filter text.
+   */
+  device: string | null;
 }
 
 export interface SelectionActions {
@@ -28,8 +36,13 @@ export interface SelectionActions {
   selectFlows: (ids: number[]) => void;
   selectFrame: (frame_no: number | null) => void;
   setFilter: (filter: string) => void;
-  /** Jump to evidence: selects its flows and its first frame. */
-  applyEvidence: (e: Evidence) => void;
+  /** Focus an 802.11 device (MAC) and clear the selected flows. */
+  selectDevice: (mac: string | null) => void;
+  /**
+   * Jump to evidence: selects its flows and its first frame. For evidence
+   * without flows (802.11 findings), pass the finding's device to focus it.
+   */
+  applyEvidence: (e: Evidence, device?: string | null) => void;
   /** Clear everything except the filter. */
   clearSelection: () => void;
   reset: () => void;
@@ -41,6 +54,7 @@ export const EMPTY_SELECTION: Selection = {
   flow_ids: [],
   frame_no: null,
   filter: "",
+  device: null,
 };
 
 export const useSelection = create<Selection & SelectionActions>()((set) => ({
@@ -53,7 +67,13 @@ export const useSelection = create<Selection & SelectionActions>()((set) => ({
   selectFlows: (flow_ids) => set({ flow_ids: [...new Set(flow_ids)] }),
   selectFrame: (frame_no) => set({ frame_no }),
   setFilter: (filter) => set({ filter }),
-  applyEvidence: (e) => set({ flow_ids: [...new Set(e.flow_ids)], frame_no: e.frame_nos[0] ?? null }),
+  selectDevice: (device) => set({ device, flow_ids: device ? [] : useSelection.getState().flow_ids }),
+  applyEvidence: (e, device) =>
+    set({
+      flow_ids: [...new Set(e.flow_ids)],
+      frame_no: e.frame_nos[0] ?? null,
+      device: e.flow_ids.length === 0 && device ? device : null,
+    }),
   clearSelection: () => set((s) => ({ ...EMPTY_SELECTION, filter: s.filter })),
   reset: () => set({ ...EMPTY_SELECTION }),
 }));

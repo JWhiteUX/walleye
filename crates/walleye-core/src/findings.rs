@@ -73,9 +73,10 @@ pub struct Finding {
     pub title: String,
     /// Detector of the highest-weight reason ("beaconing", "dns").
     pub detector: String,
-    /// "host" | "pair" | "domain".
+    /// "host" | "pair" | "domain" | "device" (802.11 MAC, contract v2).
     pub entity_type: String,
-    /// IP for host, "src->dst" for pair, name for domain.
+    /// IP for host, "src->dst" for pair, name for domain, lowercase MAC for
+    /// device.
     pub entity: String,
     /// 0..=100. Higher is more suspicious.
     pub score: f64,

@@ -17,6 +17,11 @@ pub enum Table {
     Tls,
     Files,
     Frames,
+    /// 802.11 frames (contract v2). Fields of the three wifi tables apply
+    /// only on their own view, like `frames`.
+    Wifi,
+    WifiAps,
+    WifiClients,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -37,6 +42,12 @@ pub enum FieldType {
     StrList,
     /// Protocol: accepts tcp, udp, icmp, icmp6 or a number.
     Proto,
+    /// MAC address `aa:bb:cc:dd:ee:ff` (quoted or bare; case-insensitive,
+    /// compared lowercase). `~` globs like `Str`.
+    Mac,
+    /// List of MAC addresses; values normalize like `Mac`, matching like
+    /// `StrList` (any element).
+    MacList,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -263,6 +274,164 @@ pub const FIELDS: &[FieldDef] = &[
         T::Int,
         "TCP flags byte",
     ),
+    // wifi (802.11 frames; view `wifi` only)
+    f("wifi.ts", Wifi, "ts", T::Time, "Frame time"),
+    f("wifi.frame", Wifi, "frame_no", T::Int, "Frame number"),
+    f(
+        "wifi.kind",
+        Wifi,
+        "kind",
+        T::Str,
+        "beacon, probe_req, probe_resp, auth, deauth, assoc_req, assoc_resp, reassoc_req, reassoc_resp, disassoc, action, mgmt_other, data, null, eapol",
+    ),
+    f("wifi.src", Wifi, "src", T::Mac, "Source address (SA)"),
+    f("wifi.dst", Wifi, "dst", T::Mac, "Destination address (DA)"),
+    f("wifi.tx", Wifi, "tx", T::Mac, "Transmitter address (TA)"),
+    f("wifi.bssid", Wifi, "bssid", T::Mac, "BSSID"),
+    f(
+        "wifi.ssid",
+        Wifi,
+        "ssid",
+        T::Str,
+        "Network name (SSID element)",
+    ),
+    f(
+        "wifi.security",
+        Wifi,
+        "security",
+        T::Str,
+        "Advertised security: open, wep, wpa, wpa2, wpa3, wpa2/wpa3, owe",
+    ),
+    f("wifi.channel", Wifi, "channel", T::Int, "Channel number"),
+    f("wifi.freq", Wifi, "freq_mhz", T::Int, "Frequency (MHz)"),
+    f(
+        "wifi.signal",
+        Wifi,
+        "signal_dbm",
+        T::Int,
+        "Signal strength (dBm)",
+    ),
+    f(
+        "wifi.reason",
+        Wifi,
+        "reason",
+        T::Int,
+        "Deauth/disassoc reason or auth/assoc status code",
+    ),
+    f(
+        "wifi.protected",
+        Wifi,
+        "protected",
+        T::Bool,
+        "Payload encrypted",
+    ),
+    f("wifi.retry", Wifi, "retry", T::Bool, "Retransmission"),
+    f("wifi.len", Wifi, "len", T::Bytes, "802.11 frame length"),
+    // wifi_aps (view `wifi_aps` only)
+    f("ap.bssid", WifiAps, "bssid", T::Mac, "Access point BSSID"),
+    f(
+        "ap.ssid",
+        WifiAps,
+        "ssid",
+        T::Str,
+        "Advertised network name",
+    ),
+    f("ap.channel", WifiAps, "channel", T::Int, "Channel number"),
+    f(
+        "ap.security",
+        WifiAps,
+        "security",
+        T::Str,
+        "Advertised security",
+    ),
+    f("ap.beacons", WifiAps, "beacons", T::Int, "Beacons sent"),
+    f("ap.frames", WifiAps, "frames", T::Int, "Frames in this BSS"),
+    f(
+        "ap.clients",
+        WifiAps,
+        "clients",
+        T::Int,
+        "Stations seen in this BSS",
+    ),
+    f(
+        "ap.signal",
+        WifiAps,
+        "signal_max",
+        T::Int,
+        "Strongest signal (dBm)",
+    ),
+    f(
+        "ap.randomized",
+        WifiAps,
+        "randomized",
+        T::Bool,
+        "Locally administered (randomized or spoofed) BSSID",
+    ),
+    f(
+        "ap.first_seen",
+        WifiAps,
+        "first_ts",
+        T::Time,
+        "First frame time",
+    ),
+    f(
+        "ap.last_seen",
+        WifiAps,
+        "last_ts",
+        T::Time,
+        "Last frame time",
+    ),
+    // wifi_clients (view `wifi_clients` only)
+    f("client.mac", WifiClients, "mac", T::Mac, "Station address"),
+    f(
+        "client.randomized",
+        WifiClients,
+        "randomized",
+        T::Bool,
+        "Locally administered (randomized) address",
+    ),
+    f(
+        "client.frames",
+        WifiClients,
+        "frames",
+        T::Int,
+        "Frames sent",
+    ),
+    f(
+        "client.probed",
+        WifiClients,
+        "probed_ssids",
+        T::StrList,
+        "SSIDs it probed for",
+    ),
+    f(
+        "client.bssid",
+        WifiClients,
+        "bssids",
+        T::MacList,
+        "Access points it talked to",
+    ),
+    f(
+        "client.signal",
+        WifiClients,
+        "signal_max",
+        T::Int,
+        "Strongest signal (dBm)",
+    ),
+    f(
+        "client.first_seen",
+        WifiClients,
+        "first_ts",
+        T::Time,
+        "First frame time",
+    ),
+    f(
+        "client.last_seen",
+        WifiClients,
+        "last_ts",
+        T::Time,
+        "Last frame time",
+    ),
 ];
 
 /// Shorthand terms that are not `field op value` comparisons.
@@ -270,7 +439,9 @@ pub const FIELDS: &[FieldDef] = &[
 /// `dst X` ≡ `dst_ip == X`, `port N` ≡ `(src_port == N or dst_port == N)`,
 /// and a bare protocol name (`dns`, `http`, `tls`, `tcp`, `udp`, `icmp`)
 /// ≡ `app_proto == name` / `proto == name`.
-pub const SHORTHANDS: &[&str] = &["host", "src", "dst", "port"];
+/// `mac X` (802.11 views only) ≡ any address column equals X: `src`, `dst`,
+/// `tx` or `bssid` on `wifi`, `bssid` on `wifi_aps`, `mac` on `wifi_clients`.
+pub const SHORTHANDS: &[&str] = &["host", "src", "dst", "port", "mac"];
 pub const KEYWORDS: &[&str] = &["and", "or", "not", "in"];
 pub const OPERATORS: &[&str] = &["==", "!=", ">", ">=", "<", "<=", "~", "in"];
 pub const BARE_PROTOCOLS: &[&str] = &["dns", "http", "tls", "tcp", "udp", "icmp"];

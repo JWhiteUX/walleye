@@ -85,7 +85,7 @@ const GridRow = memo(function GridRow({
           <div
             key={c.id}
             role="gridcell"
-            className={`wl-grid-cell${c.align === "right" ? " is-right" : ""}${c.mono ? " wl-mono" : ""}`}
+            className={`wl-grid-cell${c.align === "right" ? " is-right" : ""}${c.mono ? " wl-mono" : ""}${c.placeholder?.(cells) ? " is-placeholder" : ""}`}
             title={t.length > 24 ? t : undefined}
           >
             {t}

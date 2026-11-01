@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use walleye_core::rules::render_template;
 use walleye_core::{Allowlist, DnsRow, Reason, Ts};
 
-use crate::combine::Hit;
+use crate::combine::{Entity, Hit};
 use crate::rules::{Rule, RuleSet};
 use crate::util::{
     EvAcc, Hosts, display, fmt_num, has_suffix, hash64, normalize_name, ramp, round1,
@@ -485,7 +485,7 @@ pub(crate) fn analyze_parents(
             continue;
         }
         out.push(Hit {
-            host: st.host,
+            entity: Entity::Host(st.host),
             rule_idx,
             detector_family: "dns",
             title: render_template(&rule.def.title, &v),
@@ -684,7 +684,7 @@ pub(crate) fn analyze_nx(
             explanation.push_str(&format!(" ({n})"));
         }
         out.push(Hit {
-            host,
+            entity: Entity::Host(host),
             rule_idx,
             detector_family: "dns",
             title: render_template(&rule.def.title, &v),

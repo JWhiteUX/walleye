@@ -1,0 +1,111 @@
+// 802.11 display helpers shared by the table, packet pane, timeline and queue
+// (CONTRACTS §11). Pure.
+/**
+ * LINKTYPE_IEEE802_11 (105) and LINKTYPE_IEEE802_11_RADIOTAP (127). Only a fast
+ * path: `capture.link_type` is the first interface's; whether a capture has
+ * 802.11 rows is decided from data (./captureKind.ts).
+ */
+export const isWifiLinkType = (lt: number | null | undefined): boolean => lt === 105 || lt === 127;
+
+/** Most frames `device_frames` returns. Mirrors walleye_core::backend::DEVICE_FRAMES_CAP. */
+export const DEVICE_FRAMES_CAP = 10_000;
+
+const MAC = /^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$/i;
+export const isMac = (s: string): boolean => MAC.test(s);
+
+/**
+ * Locally administered bit (0x02 of the first octet): privacy-randomized
+ * clients, virtual APs or spoofed addresses.
+ */
+export function isRandomizedMac(mac: string): boolean {
+  if (!isMac(mac)) return false;
+  const b = parseInt(mac.slice(0, 2), 16);
+  // Group (multicast/broadcast) addresses also have the bit set; they are not devices.
+  return (b & 0x01) === 0 && (b & 0x02) !== 0;
+}
+
+export const BROADCAST_MAC = "ff:ff:ff:ff:ff:ff";
+
+/** Short text marker appended to randomized MACs. Text, so it never relies on colour. */
+export const RANDOMIZED_MARK = "(rand)";
+export const RANDOMIZED_HELP = "Randomized: locally administered address (privacy-randomized client, virtual AP or spoofed)";
+
+/** "02:00:5e:00:53:01 (rand)" for randomized addresses, "… (broadcast)", else the bare MAC. */
+export function macLabel(mac: string): string {
+  if (mac.toLowerCase() === BROADCAST_MAC) return `${mac} (broadcast)`;
+  return isRandomizedMac(mac) ? `${mac} ${RANDOMIZED_MARK}` : mac;
+}
+
+/** For screen readers and tooltips: "02:00:5e:00:53:01, randomized". */
+export function macSpoken(mac: string): string {
+  return isRandomizedMac(mac) ? `${mac}, randomized` : mac;
+}
+
+/**
+ * How an SSID cell reads: "" means hidden (beacon) or wildcard (probe
+ * request), null means the frame kind carries no SSID. The caller renders the
+ * placeholder differently (italic) so a network literally named "(hidden)"
+ * can't pass for one.
+ */
+export function ssidText(ssid: string | null | undefined, kind?: string): { text: string; placeholder: boolean } {
+  if (ssid === null || ssid === undefined) return { text: kind === undefined ? "(hidden)" : "", placeholder: kind === undefined };
+  if (ssid === "") return { text: kind === "probe_req" ? "(wildcard)" : "(hidden)", placeholder: true };
+  return { text: ssid, placeholder: false };
+}
+
+/**
+ * An SSID in double quotes for display inside other text, escaping ONLY `"`
+ * as `\"`, exactly like walleye_core::text::quote_ssid. Stored SSIDs already
+ * have `\` escaped (as `\u{5c}`, CONTRACTS §11.1), so `\"` is unambiguous and
+ * one SSID reads the same in the table, packet summaries and findings.
+ */
+export function quoteSsid(s: string): string {
+  return `"${s.replace(/"/g, '\\"')}"`;
+}
+
+/** Longest a quoted stored SSID can be: 32 raw bytes, each at most `\u{xxxxx}`-ish. */
+export const QUOTED_SSID_MAX = 256;
+
+/**
+ * Parse a `quoteSsid` string that starts at `text[start]` (which must be `"`):
+ * `\"` is a quote, any other `\` is literal (stored SSIDs escape `\` as
+ * `\u{5c}`). Returns the SSID and the index after the closing quote, or null
+ * when there is no closing quote within `QUOTED_SSID_MAX` characters. Never
+ * guesses: the caller shows nothing on null.
+ */
+export function parseQuotedSsid(text: string, start: number): { ssid: string; end: number } | null {
+  if (text[start] !== '"') return null;
+  let out = "";
+  const limit = Math.min(text.length, start + 1 + QUOTED_SSID_MAX);
+  for (let i = start + 1; i < limit; i++) {
+    const c = text[i]!;
+    if (c === "\\" && text[i + 1] === '"') {
+      out += '"';
+      i++;
+    } else if (c === '"') {
+      return { ssid: out, end: i + 1 };
+    } else {
+      out += c;
+    }
+  }
+  return null;
+}
+
+const KIND_LABEL: Record<string, string> = {
+  beacon: "Beacon",
+  probe_req: "Probe request",
+  probe_resp: "Probe response",
+  auth: "Auth",
+  deauth: "Deauth",
+  assoc_req: "Assoc request",
+  assoc_resp: "Assoc response",
+  reassoc_req: "Reassoc request",
+  reassoc_resp: "Reassoc response",
+  disassoc: "Disassoc",
+  action: "Action",
+  mgmt_other: "Management",
+  data: "Data",
+  null: "Null",
+  eapol: "EAPOL",
+};
+export const wifiKindLabel = (k: string): string => KIND_LABEL[k] ?? k;

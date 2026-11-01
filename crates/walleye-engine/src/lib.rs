@@ -568,6 +568,14 @@ impl Backend for Engine {
         self.opened()?.index.flow_frames(flow_id)
     }
 
+    fn device_frames(
+        &self,
+        mac: &str,
+        time_range: Option<walleye_core::ipc::TimeRange>,
+    ) -> ApiResult<Vec<FrameRef>> {
+        self.opened()?.index.device_frames(mac, time_range)
+    }
+
     fn packet(&self, frame_no: u64) -> ApiResult<PacketView> {
         let o = self.opened()?;
         let fr = o.index.frame(frame_no)?;
