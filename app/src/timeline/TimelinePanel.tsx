@@ -1,5 +1,6 @@
 // Timeline: Canvas 2D swimlanes, one per host (top N + "other"), with marks
-// per bucket by event kind, a brush that sets the shared `time_range`, zoom,
+// per bucket by event kind (on 802.11 captures: one per device MAC, with
+// marks per Wi-Fi frame class, and a lane click focuses the device), a brush that sets the shared `time_range`, zoom,
 // pan, hover details and full keyboard control. A visually-hidden table and a
 // live region give screen-reader users the same information.
 //
@@ -8,15 +9,17 @@
 // the surrounding context while every other view filters to it. "Zoom to
 // brush" (z) narrows the view to the brush on request.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { LaneKind } from "../shared/bindings/LaneKind";
 import type { Lanes } from "../shared/bindings/Lanes";
 import type { TimeRange } from "../shared/bindings/TimeRange";
 import { useRegisterCommands, type Command } from "../shared/commands";
-import { EVENT_ENCODING } from "../shared/encoding";
+import { MARK_ENCODING } from "../shared/encoding";
 import { formatDuration, formatTime, formatTs } from "../shared/format";
 import { api, WalleyeError } from "../shared/ipc";
 import { useSelection } from "../shared/selection";
 import { useSession } from "../shared/session";
 import { getTimelineSnapshot, registerTimelineSnapshot } from "../shared/snapshots";
+import { isWifiCapture, RANDOMIZED_HELP } from "../shared/wifi";
 import { cursorStep, inRange, keyBrush, MIN_BRUSH_PX, normalizeBrush } from "./brush";
 import { drawTimeline, readTheme, type Scene, type Theme } from "./draw";
 import { createLatestRunner } from "./latest";
@@ -27,7 +30,8 @@ import {
   contentHeight,
   describeCounts,
   hitTest,
-  KINDS,
+  kindsFor,
+  labelWidth,
   laneLabel,
   LAYOUT,
   type LaneModel,
@@ -70,6 +74,8 @@ function TimelineView() {
   const hosts = useSelection((s) => s.hosts);
   const setTimeRange = useSelection((s) => s.setTimeRange);
   const toggleHost = useSelection((s) => s.toggleHost);
+  const device = useSelection((s) => s.device);
+  const selectDevice = useSelection((s) => s.selectDevice);
   const capture = useSession((s) => s.session?.capture ?? null);
 
   const [load, setLoad] = useState<LoadState | null>(null);
@@ -100,7 +106,12 @@ function TimelineView() {
     () => (extent ? (userView ? clampView(userView, extent) : extent) : null),
     [extent, userView],
   );
-  const pw = plotWidth(size.w || FALLBACK_WIDTH);
+  // Device lanes (802.11) are keyed by MAC and draw the Wi-Fi frame classes.
+  const laneKind: LaneKind = (load?.kind === "ok" ? load.lanes.lane_kind : null) ?? (isWifiCapture(capture) ? "device" : "host");
+  const isDevice = laneKind === "device";
+  const kinds = useMemo(() => kindsFor(laneKind), [laneKind]);
+  const lw = labelWidth(laneKind);
+  const pw = plotWidth(size.w || FALLBACK_WIDTH, lw);
 
   // ----- query -----
   const req = useMemo<Req>(() => {
@@ -151,10 +162,11 @@ function TimelineView() {
   );
   const colOrigin = lanesData?.range.start ?? 0;
   const lanes = useMemo<LaneModel[]>(
-    () => (lanesData ? buildLaneModels(lanesData.lanes, colOrigin, colUs) : []),
+    () => (lanesData ? buildLaneModels(lanesData.lanes, colOrigin, colUs, kindsFor(lanesData.lane_kind)) : []),
     [lanesData, colOrigin, colUs],
   );
-  const selectedHosts = useMemo(() => new Set(hosts), [hosts]);
+  // Device lanes highlight the focused device; host lanes the selected hosts.
+  const selectedHosts = useMemo(() => new Set(isDevice ? (device ? [device] : []) : hosts), [isDevice, device, hosts]);
   const laneIdx = focusedLane === null || lanes.length === 0 ? null : Math.min(focusedLane, lanes.length - 1);
 
   // ----- size / theme -----
@@ -198,8 +210,11 @@ function TimelineView() {
       focusedLane: laneIdx,
       focused,
       hover: hover ? { lane: hover.lane, t: hover.t } : null,
+      laneKind,
+      kinds,
+      labelW: lw,
     };
-  }, [view, size, scrollY, lanes, colUs, colOrigin, selectedHosts, brush, draft, cursor, laneIdx, focused, hover]);
+  }, [view, size, scrollY, lanes, colUs, colOrigin, selectedHosts, brush, draft, cursor, laneIdx, focused, hover, laneKind, kinds, lw]);
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
@@ -242,9 +257,9 @@ function TimelineView() {
   );
 
   // ----- view actions -----
-  const latest = useRef({ view, extent, cursor, brush, colUs, lanes, laneIdx, pw });
+  const latest = useRef({ view, extent, cursor, brush, colUs, lanes, laneIdx, pw, lw });
   useEffect(() => {
-    latest.current = { view, extent, cursor, brush, colUs, lanes, laneIdx, pw };
+    latest.current = { view, extent, cursor, brush, colUs, lanes, laneIdx, pw, lw };
   });
 
   const zoomBy = useCallback((factor: number, anchor?: number) => {
@@ -273,6 +288,15 @@ function TimelineView() {
     setAnnounce("Time range cleared");
   }, [setTimeRange]);
   const focusCanvas = useCallback(() => canvasRef.current?.focus(), []);
+  /** Device lane activation: focus the device (or unfocus it when it already is). */
+  const activateDevice = useCallback(
+    (mac: string) => {
+      const was = useSelection.getState().device === mac;
+      selectDevice(was ? null : mac);
+      setAnnounce(was ? `${mac} unfocused` : `${mac} focused; the packet list shows its frames`);
+    },
+    [selectDevice],
+  );
 
   const commands = useMemo<Command[]>(
     () => [
@@ -308,16 +332,16 @@ function TimelineView() {
       if (!l) return "";
       const c0 = columnStart(t, colOrigin, colUs);
       const col = columnAt(l, t, colUs);
-      return `${laneLabel(l)}, ${formatTime(c0)} to ${formatTime(c0 + colUs)}: ${col ? describeCounts(col.counts) : "no flows"}`;
+      return `${laneLabel(l, laneKind)}, ${formatTime(c0)} to ${formatTime(c0 + colUs)}: ${describeCounts(col?.counts ?? {}, kinds)}`;
     },
-    [lanes, colOrigin, colUs],
+    [lanes, colOrigin, colUs, laneKind, kinds],
   );
   const describeLane = (i: number): string => {
     const l = lanes[i];
     if (!l) return "";
     const badge = scoreBadge(l.maxScore);
-    const sel = !l.isOther && selectedHosts.has(l.host) ? ", selected" : "";
-    return `Lane ${i + 1} of ${lanes.length}: ${laneLabel(l)}, ${l.total} flows${badge ? `, score ${badge.text}` : ""}${sel}. ${describeCounts(l.kindTotals)}`;
+    const sel = !l.isOther && selectedHosts.has(l.host) ? (isDevice ? ", focused" : ", selected") : "";
+    return `Lane ${i + 1} of ${lanes.length}: ${laneLabel(l, laneKind)}, ${l.total} ${isDevice ? "frames" : "flows"}${badge ? `, score ${badge.text}` : ""}${sel}. ${describeCounts(l.kindTotals, kinds)}`;
   };
 
   const scrollLaneIntoView = (i: number) => {
@@ -375,7 +399,8 @@ function TimelineView() {
       case "Enter":
       case " ": {
         const l = laneIdx !== null ? lanes[laneIdx] : undefined;
-        if (l && !l.isOther) {
+        if (l && !l.isOther && isDevice) activateDevice(l.host);
+        else if (l && !l.isOther) {
           const wasSelected = selectedHosts.has(l.host);
           toggleHost(l.host);
           setAnnounce(`${l.host} ${wasSelected ? "removed from" : "added to"} host selection`);
@@ -422,7 +447,9 @@ function TimelineView() {
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
   const hit = (x: number, y: number) =>
-    view ? hitTest(x, y, { width: size.w, height: size.h, scrollY, laneCount: lanes.length, view }) : ({ region: "none" } as const);
+    view
+      ? hitTest(x, y, { width: size.w, height: size.h, scrollY, laneCount: lanes.length, view, labelW: lw })
+      : ({ region: "none" } as const);
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.button !== 0 || !view) return;
@@ -440,7 +467,7 @@ function TimelineView() {
     if (d && d.pointerId === e.pointerId) {
       if (!d.dragging && Math.abs(x - d.x0) >= MIN_BRUSH_PX) d.dragging = true;
       if (d.dragging) {
-        const px = plotX();
+        const px = plotX(lw);
         const t = xToTime(Math.min(Math.max(x, px), px + pw), view, px, pw);
         setDraft(normalizeBrush(d.t0, t, extent));
         setHover(null);
@@ -457,7 +484,7 @@ function TimelineView() {
     const d = dragRef.current;
     dragRef.current = null;
     if (d && d.dragging) {
-      const px = plotX();
+      const px = plotX(lw);
       const t = xToTime(Math.min(Math.max(x, px), px + pw), view, px, pw);
       const r = normalizeBrush(d.t0, t, extent);
       setDraft(null);
@@ -470,7 +497,8 @@ function TimelineView() {
     if (h.region === "label") {
       setFocusedLane(h.lane);
       const l = lanes[h.lane];
-      if (l && !l.isOther) toggleHost(l.host);
+      if (l && !l.isOther && isDevice) activateDevice(l.host);
+      else if (l && !l.isOther) toggleHost(l.host);
     } else if (h.region === "plot") {
       if (h.lane !== null) setFocusedLane(h.lane);
       setCursor(h.t);
@@ -487,11 +515,12 @@ function TimelineView() {
     const el = canvasRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      const { view: v, extent: ex, pw: w } = latest.current;
+      const { view: v, extent: ex, pw: w, lw: labelW } = latest.current;
       if (!v || !ex) return;
       const r = el.getBoundingClientRect();
       const x = e.clientX - r.left;
-      if (x < plotX()) return; // over lane labels: let the lanes scroll natively
+      const px = plotX(labelW);
+      if (x < px) return; // over lane labels: let the lanes scroll natively
       e.preventDefault();
       const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey;
       if (horizontal) {
@@ -499,7 +528,7 @@ function TimelineView() {
         const next = pan(v, ex, (d / w) * span(v));
         setUserView(span(next) >= span(ex) ? null : next);
       } else {
-        const anchor = xToTime(Math.min(Math.max(x, plotX()), plotX() + w), v, plotX(), w);
+        const anchor = xToTime(Math.min(Math.max(x, px), px + w), v, px, w);
         const next = zoomAt(v, ex, Math.exp(e.deltaY * 0.002), anchor);
         setUserView(span(next) >= span(ex) ? null : next);
       }
@@ -539,12 +568,20 @@ function TimelineView() {
           Timeline
         </h2>
         <ul className="wl-tl-legend" aria-label="Legend">
-          {KINDS.map((k) => (
+          {kinds.map((k) => (
             <li key={k}>
               <ShapeIcon kind={k} />
-              {EVENT_ENCODING[k].label}
+              {MARK_ENCODING[k].label}
             </li>
           ))}
+          {isDevice && (
+            <li title={RANDOMIZED_HELP}>
+              <span className="wl-tl-chip" aria-hidden="true">
+                R
+              </span>
+              Randomized MAC
+            </li>
+          )}
         </ul>
         <div className="wl-tl-tools" role="group" aria-label="Timeline view">
           <button type="button" onClick={() => zoomBy(ZOOM_STEP)} aria-keyshortcuts="+" title="Zoom in (+)">
@@ -590,7 +627,7 @@ function TimelineView() {
               tabIndex={0}
               role="application"
               aria-roledescription="timeline"
-              aria-label={`Timeline, ${lanes.length} host lanes`}
+              aria-label={`Timeline, ${lanes.length} ${isDevice ? "device" : "host"} lanes`}
               aria-describedby="wl-tl-help wl-tl-summary-caption"
               data-testid="timeline-canvas"
               onKeyDown={onKeyDown}
@@ -607,7 +644,10 @@ function TimelineView() {
         {status !== "ready" && (
           <p className="wl-tl-empty" role={status === "error" ? "alert" : undefined}>
             {status === "loading" && "Loading timeline…"}
-            {status === "empty" && "No flows match the current filter in this time window."}
+            {status === "empty" &&
+              (isDevice
+                ? "No 802.11 frames match the current filter in this time window."
+                : "No flows match the current filter in this time window.")}
             {status === "no-capture" && "Open a capture to see the timeline."}
             {status === "error" && load?.kind === "error" && `Timeline query failed: ${load.message}`}
           </p>
@@ -618,14 +658,14 @@ function TimelineView() {
             aria-hidden="true"
             style={{ left: Math.min(tooltip.x + 14, Math.max(0, size.w - 220)), top: Math.min(tooltip.y + 14, Math.max(0, size.h - 120)) }}
           >
-            <div className="wl-tl-tip-host">{laneLabel(tooltip.lane)}</div>
+            <div className="wl-tl-tip-host">{laneLabel(tooltip.lane, laneKind)}</div>
             <div className="wl-mono">
               {formatTime(tooltip.c0)} – {formatTime(tooltip.c0 + colUs)}
             </div>
             <ul>
-              {KINDS.map((k) => (
+              {kinds.map((k) => (
                 <li key={k}>
-                  <ShapeIcon kind={k} /> {EVENT_ENCODING[k].label}: {tooltip.col?.counts[k] ?? 0}
+                  <ShapeIcon kind={k} /> {MARK_ENCODING[k].label}: {tooltip.col?.counts[k] ?? 0}
                 </li>
               ))}
             </ul>
@@ -633,9 +673,9 @@ function TimelineView() {
         )}
       </div>
       <p id="wl-tl-help" className="wl-visually-hidden">
-        Arrow left and right move a time cursor; Shift with arrow left or right extends the selected time range. Arrow up and
-        down move between host lanes; Enter toggles the focused host in the selection. Plus and minus zoom, brackets pan, 0
-        shows the whole capture, z zooms to the selected range, Escape clears it.
+        {isDevice
+          ? "Arrow left and right move a time cursor; Shift with arrow left or right extends the selected time range. Arrow up and down move between device lanes; Enter focuses that device so the packet list shows its frames. Plus and minus zoom, brackets pan, 0 shows the whole capture, z zooms to the selected range, Escape clears it."
+          : "Arrow left and right move a time cursor; Shift with arrow left or right extends the selected time range. Arrow up and down move between host lanes; Enter toggles the focused host in the selection. Plus and minus zoom, brackets pan, 0 shows the whole capture, z zooms to the selected range, Escape clears it."}
       </p>
       <div className="wl-visually-hidden" aria-live="polite" data-testid="timeline-live">
         {announce}
@@ -648,25 +688,25 @@ function TimelineView() {
         </caption>
         <thead>
           <tr>
-            <th scope="col">Host</th>
-            <th scope="col">Flows</th>
+            <th scope="col">{isDevice ? "Device" : "Host"}</th>
+            <th scope="col">{isDevice ? "Frames" : "Flows"}</th>
             <th scope="col">Highest score</th>
-            {KINDS.map((k) => (
+            {kinds.map((k) => (
               <th scope="col" key={k}>
-                {EVENT_ENCODING[k].label}
+                {MARK_ENCODING[k].label}
               </th>
             ))}
-            <th scope="col">In host selection</th>
+            <th scope="col">{isDevice ? "Focused" : "In host selection"}</th>
           </tr>
         </thead>
         <tbody>
           {lanes.map((l) => (
             <tr key={l.host} data-host={l.host}>
-              <th scope="row">{laneLabel(l)}</th>
+              <th scope="row">{laneLabel(l, laneKind)}</th>
               <td>{l.total}</td>
               <td>{scoreBadge(l.maxScore)?.text ?? "none"}</td>
-              {KINDS.map((k) => (
-                <td key={k}>{l.kindTotals[k]}</td>
+              {kinds.map((k) => (
+                <td key={k}>{l.kindTotals[k] ?? 0}</td>
               ))}
               <td>{!l.isOther && selectedHosts.has(l.host) ? "yes" : "no"}</td>
             </tr>

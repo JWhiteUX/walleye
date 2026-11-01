@@ -17,7 +17,8 @@ import { useSelection } from "../shared/selection";
 import { useSession } from "../shared/session";
 import { createLatestRunner } from "../timeline/latest";
 import "../timeline/testHooks";
-import { barPct, evidenceLabel, formatValue, VERDICTS, verdictLabel } from "./format";
+import { isRandomizedMac, macLabel, RANDOMIZED_HELP } from "../shared/wifi";
+import { barPct, evidenceLabel, formatValue, ssidContext, VERDICTS, verdictLabel } from "./format";
 import "./queue.css";
 
 type Load =
@@ -113,7 +114,10 @@ function QueueView() {
 
   const showEvidence = useCallback(
     (f: Finding, r: Reason) => {
-      applyEvidence(r.evidence);
+      // 802.11 findings have frame evidence only: focus the device so the
+      // packet list shows its frames (CONTRACTS §11.4).
+      if (f.entity_type === "device") applyEvidence(r.evidence, f.entity);
+      else applyEvidence(r.evidence);
       if (f.entity_type === "host") setHosts([f.entity]);
       const frame = r.evidence.frame_nos[0];
       setStatus({
@@ -297,7 +301,21 @@ function QueueView() {
                   <span className="wl-q-main">
                     <span className="wl-q-ftitle">{visible(f.title)}</span>
                     <span className="wl-q-meta">
-                      <span className="wl-mono">{visible(f.entity)}</span>
+                      {f.entity_type === "device" ? (
+                        <>
+                          <span className="wl-mono" title={isRandomizedMac(f.entity) ? RANDOMIZED_HELP : "802.11 device"}>
+                            {macLabel(visible(f.entity))}
+                          </span>
+                          {ssidContext(f) !== null && (
+                            <>
+                              {" · SSID "}
+                              <span className="wl-mono">“{visible(ssidContext(f)!)}”</span>
+                            </>
+                          )}
+                        </>
+                      ) : (
+                        <span className="wl-mono">{visible(f.entity)}</span>
+                      )}
                       {f.attack_technique && (
                         <>
                           {" · "}

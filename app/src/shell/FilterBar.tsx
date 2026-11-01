@@ -5,6 +5,8 @@ import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useRef,
 import type { Suggestion } from "../shared/bindings/Suggestion";
 import { api } from "../shared/ipc";
 import { useSelection } from "../shared/selection";
+import { useSession } from "../shared/session";
+import { isWifiCapture } from "../shared/wifi";
 import { useFilterStatus } from "./filterStatus";
 import { applySuggestion, byteToUtf16, splitAtSpan, utf16ToByte } from "./filterText";
 import { visible } from "../shared/format";
@@ -28,6 +30,7 @@ export const FilterBar = forwardRef<FilterBarHandle>(function FilterBar(_props, 
   const committed = useSelection((s) => s.filter);
   const setFilter = useSelection((s) => s.setFilter);
   const problem = useFilterStatus((s) => s.problem);
+  const wifi = useSession((s) => isWifiCapture(s.session?.capture));
   const [draft, setDraft] = useState(committed);
   const [seen, setSeen] = useState(committed);
   // Suggestions plus the exact text they were computed for; stale ones are never shown.
@@ -185,7 +188,7 @@ export const FilterBar = forwardRef<FilterBarHandle>(function FilterBar(_props, 
           aria-invalid={showProblem ? true : undefined}
           aria-describedby={showProblem ? errId : `${base}-hint`}
           value={draft}
-          placeholder='host 10.0.0.5 and dns.query ~ "*.top"'
+          placeholder={wifi ? "mac 02:00:5e:00:53:01 and wifi.kind == deauth" : 'host 10.0.0.5 and dns.query ~ "*.top"'}
           spellCheck={false}
           autoComplete="off"
           autoCapitalize="off"
@@ -227,6 +230,7 @@ export const FilterBar = forwardRef<FilterBarHandle>(function FilterBar(_props, 
       </button>
       <span id={`${base}-hint`} className="wl-visually-hidden">
         Press Down for suggestions, Enter to apply, Escape to revert.
+        {wifi ? " On 802.11 captures, mac followed by an address matches any address field; wifi., ap. and client. fields apply to their own tab." : ""}
       </span>
       {showProblem && (
         <p id={errId} className="wl-filter-msg wl-error-text" role="alert" data-testid="filter-error">

@@ -5,10 +5,14 @@ import type { FileRow } from "../shared/bindings/FileRow";
 import type { FlowRow } from "../shared/bindings/FlowRow";
 import type { HttpRow } from "../shared/bindings/HttpRow";
 import type { TlsRow } from "../shared/bindings/TlsRow";
+import type { WifiApRow } from "../shared/bindings/WifiApRow";
+import type { WifiClientRow } from "../shared/bindings/WifiClientRow";
+import type { WifiRow } from "../shared/bindings/WifiRow";
 import { formatBytes, formatDuration, formatTs, protoName, visible } from "../shared/format";
+import { macLabel, ssidText, wifiKindLabel } from "../shared/wifi";
 import type { TableView } from "./store";
 
-export type AnyRow = FlowRow | DnsRow | HttpRow | TlsRow | FileRow;
+export type AnyRow = FlowRow | DnsRow | HttpRow | TlsRow | FileRow | WifiRow | WifiApRow | WifiClientRow;
 
 export interface ColumnSpec {
   /** Row key; also the `Sort.column` sent to the backend when `sortable`. */
@@ -21,6 +25,12 @@ export interface ColumnSpec {
   align?: "right";
   mono?: boolean;
   text: (row: Record<string, unknown>) => string;
+  /**
+   * True when the cell shows a placeholder such as "(hidden)" rather than
+   * captured text. The grid styles it differently (italic, muted), so a
+   * network literally named "(hidden)" can't pass for one.
+   */
+  placeholder?: (row: Record<string, unknown>) => boolean;
 }
 
 const str = (k: string) => (r: Record<string, unknown>) => {
@@ -30,6 +40,13 @@ const str = (k: string) => (r: Record<string, unknown>) => {
 const num = str;
 const bytes = (k: string) => (r: Record<string, unknown>) => (typeof r[k] === "number" ? formatBytes(r[k] as number) : "");
 const ts = (k: string) => (r: Record<string, unknown>) => (typeof r[k] === "number" ? formatTs(r[k] as number) : "");
+// 802.11: MACs carry a text marker when randomized; SSIDs pass through visible().
+const mac = (k: string) => (r: Record<string, unknown>) => (typeof r[k] === "string" ? macLabel(visible(r[k] as string)) : "");
+const macs = (k: string) => (r: Record<string, unknown>) =>
+  ((r[k] as string[] | undefined) ?? []).map((m) => macLabel(visible(m))).join(", ");
+const dbm = (k: string) => (r: Record<string, unknown>) => (typeof r[k] === "number" ? `${r[k] as number} dBm` : "");
+const apSsid = (r: Record<string, unknown>) => visible(ssidText(r.ssid as string | null).text);
+const frameSsid = (r: Record<string, unknown>) => visible(ssidText(r.ssid as string | null, String(r.kind ?? "")).text);
 const bool = (k: string) => (r: Record<string, unknown>) => (r[k] === true ? "yes" : r[k] === false ? "no" : "");
 
 const col = (id: string, header: string, width: number, text: ColumnSpec["text"], o: Partial<ColumnSpec> = {}): ColumnSpec => ({
@@ -109,6 +126,45 @@ export const COLUMNS: Record<TableView, ColumnSpec[]> = {
     col("mime_type", "MIME type", 180, str("mime_type"), { field: "file.mime_type" }),
     col("size_bytes", "Size", 90, bytes("size_bytes"), { field: "file.size", align: "right" }),
   ],
+  wifi_aps: [
+    col("bssid", "BSSID", 220, mac("bssid"), { field: "ap.bssid", mono: true }),
+    col("ssid", "SSID", 180, apSsid, { field: "ap.ssid", placeholder: (r) => ssidText(r.ssid as string | null).placeholder }),
+    col("security", "Security", 90, str("security"), { field: "ap.security" }),
+    col("channel", "Ch", 48, num("channel"), { field: "ap.channel", align: "right" }),
+    col("signal_max", "Signal", 80, dbm("signal_max"), { field: "ap.signal", align: "right" }),
+    col("beacons", "Beacons", 76, num("beacons"), { field: "ap.beacons", align: "right" }),
+    col("frames", "Frames", 72, num("frames"), { field: "ap.frames", align: "right" }),
+    col("clients", "Clients", 68, num("clients"), { field: "ap.clients", align: "right" }),
+    col("first_ts", "First seen (UTC)", 210, ts("first_ts"), { field: "ap.first_seen", mono: true }),
+    col("last_ts", "Last seen (UTC)", 210, ts("last_ts"), { field: "ap.last_seen", mono: true }),
+  ],
+  wifi_clients: [
+    col("mac", "Client", 220, mac("mac"), { field: "client.mac", mono: true }),
+    col("frames", "Frames", 72, num("frames"), { field: "client.frames", align: "right" }),
+    col("signal_max", "Signal", 80, dbm("signal_max"), { field: "client.signal", align: "right" }),
+    col("probed_ssids", "Probed SSIDs", 260, (r) => visible(((r.probed_ssids as string[] | undefined) ?? []).join(", ")), {
+      field: "client.probed",
+      sortable: false,
+    }),
+    col("bssids", "Access points", 260, macs("bssids"), { field: "client.bssid", sortable: false, mono: true }),
+    col("first_ts", "First seen (UTC)", 210, ts("first_ts"), { field: "client.first_seen", mono: true }),
+    col("last_ts", "Last seen (UTC)", 210, ts("last_ts"), { field: "client.last_seen", mono: true }),
+  ],
+  wifi: [
+    col("frame_no", "Frame", 70, num("frame_no"), { field: "wifi.frame", align: "right", mono: true }),
+    col("ts", "Time (UTC)", 210, ts("ts"), { field: "wifi.ts", mono: true }),
+    col("kind", "Kind", 120, (r) => wifiKindLabel(String(r.kind ?? "")), { field: "wifi.kind" }),
+    col("tx", "Transmitter", 220, mac("tx"), { field: "wifi.tx", mono: true }),
+    col("dst", "Destination", 248, mac("dst"), { field: "wifi.dst", mono: true }),
+    col("bssid", "BSSID", 220, mac("bssid"), { field: "wifi.bssid", mono: true }),
+    col("ssid", "SSID", 160, frameSsid, { field: "wifi.ssid", placeholder: (r) => r.ssid === "" }),
+    col("security", "Security", 84, str("security"), { field: "wifi.security" }),
+    col("channel", "Ch", 44, num("channel"), { field: "wifi.channel", align: "right" }),
+    col("signal_dbm", "Signal", 80, dbm("signal_dbm"), { field: "wifi.signal", align: "right" }),
+    col("reason", "Reason", 64, num("reason"), { field: "wifi.reason", align: "right" }),
+    col("protected", "Prot.", 52, bool("protected"), { field: "wifi.protected" }),
+    col("len", "Len", 64, num("len"), { field: "wifi.len", align: "right" }),
+  ],
 };
 
 export const VIEW_LABEL: Record<TableView, string> = {
@@ -117,7 +173,27 @@ export const VIEW_LABEL: Record<TableView, string> = {
   http: "HTTP",
   tls: "TLS",
   files: "Files",
+  wifi_aps: "Access points",
+  wifi_clients: "Clients",
+  wifi: "Wi-Fi frames",
 };
+
+/** What a row click selects on the 802.11 views (CONTRACTS §11.4); null for IP views. */
+export function wifiRowTarget(view: TableView, row: AnyRow): { device: string | null; frame: number | null } | null {
+  const r = row as unknown as Record<string, unknown>;
+  const s = (k: string) => (typeof r[k] === "string" ? (r[k] as string) : null);
+  const n = (k: string) => (typeof r[k] === "number" ? (r[k] as number) : null);
+  switch (view) {
+    case "wifi_aps":
+      return { device: s("bssid"), frame: n("first_frame") };
+    case "wifi_clients":
+      return { device: s("mac"), frame: n("first_frame") };
+    case "wifi":
+      return { device: s("tx") ?? s("src"), frame: n("frame_no") };
+    default:
+      return null;
+  }
+}
 
 /** The frame to show when a row is selected: the row's own frame, else the flow's first. */
 export function rowFrame(row: AnyRow): number | null {
