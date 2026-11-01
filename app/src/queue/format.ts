@@ -1,5 +1,6 @@
 // Display helpers for the suspicion queue. Pure; see format.test.ts.
 import type { Evidence } from "../shared/bindings/Evidence";
+import type { Finding } from "../shared/bindings/Finding";
 import type { Verdict } from "../shared/bindings/Verdict";
 
 export const VERDICTS: { value: Verdict; label: string; key: string }[] = [
@@ -50,6 +51,20 @@ export function evidenceLabel(e: Evidence): string {
   let s = parts.join(" · ") || "no evidence";
   if (e.truncated) s += ` (first ${Math.max(e.flow_ids.length, e.frame_nos.length)} of ${e.total.toLocaleString("en-US")})`;
   return s;
+}
+
+/**
+ * SSID context of an 802.11 (device) finding: the first quoted name in its
+ * explanations, e.g. `SSID "Corner-Cafe" is advertised as wpa2 by …`. Null for
+ * other findings or when none is quoted. The caller renders it as text.
+ */
+export function ssidContext(f: Pick<Finding, "entity_type" | "reasons">): string | null {
+  if (f.entity_type !== "device") return null;
+  for (const r of f.reasons) {
+    const m = /"([^"]{1,32})"/.exec(r.explanation);
+    if (m) return m[1]!;
+  }
+  return null;
 }
 
 /** Clamp a score to 0..100 for the bar width. */

@@ -27,6 +27,11 @@
   --wl-kind-http: #d2a8ff;
   --wl-kind-bulk: #ffa657;
   --wl-kind-other: #a3acb9;
+  /* 802.11 device lanes; each also has its own shape (encoding.ts). */
+  --wl-kind-wifi-mgmt: #56d4dd;
+  --wl-kind-wifi-probe: #d2a8ff;
+  --wl-kind-wifi-data: #7ee787;
+  --wl-kind-wifi-deauth: #ff7b72;
 
   --wl-score-high: #ff7b72;
   --wl-score-medium: #e3b341;
@@ -50,6 +55,10 @@
     --wl-kind-http: #8250df;
     --wl-kind-bulk: #bc4c00;
     --wl-kind-other: #57606a;
+    --wl-kind-wifi-mgmt: #0a7180;
+    --wl-kind-wifi-probe: #8250df;
+    --wl-kind-wifi-data: #1a7f37;
+    --wl-kind-wifi-deauth: #cf222e;
     --wl-score-high: #cf222e;
     --wl-score-medium: #9a6700;
     --wl-score-low: #57606a;

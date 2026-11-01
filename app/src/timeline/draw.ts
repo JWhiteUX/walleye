@@ -2,9 +2,11 @@
 // plain `Scene`; marks are batched into one path per kind, so cost grows with
 // visible columns, not with buckets. Captured strings are drawn with
 // fillText (never parsed as markup).
+import type { LaneKind } from "../shared/bindings/LaneKind";
 import type { TimeRange } from "../shared/bindings/TimeRange";
-import type { Shape } from "../shared/encoding";
-import { EVENT_ENCODING } from "../shared/encoding";
+import type { MarkKind, Shape } from "../shared/encoding";
+import { MARK_ENCODING } from "../shared/encoding";
+import { isRandomizedMac } from "../shared/wifi";
 import {
   columnStart,
   KINDS,
@@ -30,7 +32,7 @@ export interface Theme {
   accent: string;
   focus: string;
   selection: string;
-  kinds: Record<(typeof KINDS)[number], string>;
+  kinds: Record<MarkKind, string>;
   score: { High: string; Medium: string; Low: string };
   fontUi: string;
   fontMono: string;
@@ -56,13 +58,19 @@ export interface Scene {
   focused: boolean;
   hover: { lane: number; t: number } | null;
   message?: string | null;
+  /** Lane keying (default "host"). Device lanes draw MAC labels and the Wi-Fi kinds. */
+  laneKind?: LaneKind;
+  /** Mark rows, in draw order (default: the IP event kinds). */
+  kinds?: readonly MarkKind[];
+  /** Width of the lane-label column (default LAYOUT.labelW). */
+  labelW?: number;
 }
 
 /** The subset of the 2D context the shape builder uses (testable with a fake). */
 export interface PathSink {
   moveTo(x: number, y: number): void;
   lineTo(x: number, y: number): void;
-  arc(x: number, y: number, r: number, a0: number, a1: number): void;
+  arc(x: number, y: number, r: number, a0: number, a1: number, ccw?: boolean): void;
   rect(x: number, y: number, w: number, h: number): void;
   closePath(): void;
 }
@@ -98,6 +106,41 @@ export function shapePath(p: PathSink, shape: Shape, cx: number, cy: number, r: 
       p.moveTo(cx + r, cy - r);
       p.lineTo(cx - r, cy + r);
       return;
+    case "ring": // filled annulus: the inner circle runs the other way (nonzero rule)
+      p.moveTo(cx + r, cy);
+      p.arc(cx, cy, r, 0, Math.PI * 2);
+      p.moveTo(cx + r * 0.5, cy);
+      p.arc(cx, cy, r * 0.5, Math.PI * 2, 0, true);
+      p.closePath();
+      return;
+    case "triangle-down":
+      p.moveTo(cx, cy + r);
+      p.lineTo(cx + r, cy - r * 0.85);
+      p.lineTo(cx - r, cy - r * 0.85);
+      p.closePath();
+      return;
+    case "bar": {
+      const w = r * 0.45;
+      p.moveTo(cx - w, cy - r);
+      p.lineTo(cx + w, cy - r);
+      p.lineTo(cx + w, cy + r);
+      p.lineTo(cx - w, cy + r);
+      p.closePath();
+      return;
+    }
+    case "star": {
+      // Eight-point burst: alternating outer and inner radius.
+      for (let i = 0; i < 16; i++) {
+        const a = (i * Math.PI) / 8 - Math.PI / 2;
+        const rr = i % 2 === 0 ? r * 1.1 : r * 0.45;
+        const x = cx + rr * Math.cos(a);
+        const y = cy + rr * Math.sin(a);
+        if (i === 0) p.moveTo(x, y);
+        else p.lineTo(x, y);
+      }
+      p.closePath();
+      return;
+    }
   }
 }
 
@@ -177,9 +220,11 @@ export function drawTimeline(ctx: CanvasRenderingContext2D, s: Scene, th: Theme)
   ctx.fillStyle = th.surface;
   ctx.fillRect(0, 0, W, H);
 
-  const px = plotX();
-  const pw = plotWidth(W);
+  const px = plotX(s.labelW);
+  const pw = plotWidth(W, s.labelW);
   const X = (t: number) => timeToX(t, view, px, pw);
+  const kinds = s.kinds ?? KINDS;
+  const device = s.laneKind === "device";
   const [first, last] = visibleLanes(s.lanes.length, s.scrollY, H);
   const tk = ticks(view, pw);
 
@@ -229,20 +274,20 @@ export function drawTimeline(ctx: CanvasRenderingContext2D, s: Scene, th: Theme)
   // Each mark is a pre-rendered sprite (per kind, size, colour and dpr):
   // drawImage is far cheaper than tessellating thousands of path shapes.
   const snap = (v: number) => Math.round(v * dpr) / dpr;
-  for (const kind of KINDS) {
+  for (const kind of kinds) {
     const colour = th.kinds[kind];
-    const small = sprite(EVENT_ENCODING[kind].shape, colour, false, dpr);
-    const big = sprite(EVENT_ENCODING[kind].shape, colour, true, dpr);
+    const small = sprite(MARK_ENCODING[kind].shape, colour, false, dpr);
+    const big = sprite(MARK_ENCODING[kind].shape, colour, true, dpr);
     for (let i = first; i < last; i++) {
       const lane = s.lanes[i]!;
-      const y = snap(rowY(laneTop(i, s.scrollY), kind)) - SPRITE_HALF;
+      const y = snap(rowY(laneTop(i, s.scrollY), kind, kinds)) - SPRITE_HALF;
       const cols = lane.columns;
       // Columns are sorted: skip straight to the first one in view.
       for (let j = firstColumn(cols, view.start - s.colUs); j < cols.length; j++) {
         const c = cols[j]!;
         if (c.t > view.end) break;
         const n = c.counts[kind];
-        if (n === 0) continue;
+        if (!n) continue;
         ctx.drawImage(n > 2 ? big : small, snap(X(c.t + half)) - SPRITE_HALF, y, SPRITE_CSS, SPRITE_CSS);
       }
     }
@@ -310,7 +355,24 @@ export function drawTimeline(ctx: CanvasRenderingContext2D, s: Scene, th: Theme)
     const badgeW = badge ? 58 : 0;
     ctx.font = `${l.isOther ? "italic " : ""}${selected ? "600 " : ""}12px ${l.isOther ? th.fontUi : th.fontMono}`;
     ctx.fillStyle = l.isOther ? th.muted : th.text;
-    ctx.fillText(clipText(ctx, laneLabel(l), px - x - badgeW - 10), x, mid);
+    // Device lanes: the bare MAC, then an "R" chip when it is randomized
+    // (a glyph, not colour); the accessible table says "randomized" in words.
+    const text = device ? (l.isOther ? "Other devices" : l.host) : laneLabel(l);
+    const chip = device && !l.isOther && isRandomizedMac(l.host);
+    const chipW = chip ? 16 : 0;
+    const shown = clipText(ctx, text, px - x - badgeW - chipW - 10);
+    ctx.fillText(shown, x, mid);
+    if (chip) {
+      const cx = x + ctx.measureText(shown).width + 5;
+      ctx.strokeStyle = th.muted;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(Math.round(cx) + 0.5, mid - 6.5, 12, 13);
+      ctx.font = `600 9px ${th.fontUi}`;
+      ctx.fillStyle = th.text;
+      ctx.textAlign = "center";
+      ctx.fillText("R", Math.round(cx) + 6.5, mid + 0.5);
+      ctx.textAlign = "left";
+    }
     if (badge) {
       const bx = px - badgeW - 6;
       const by = mid - 8;
@@ -401,11 +463,15 @@ export function readTheme(el: Element): Theme {
     focus: v("--wl-focus", "#ffd166"),
     selection: v("--wl-selection", "#23415f"),
     kinds: {
-      dns: v(EVENT_ENCODING.dns.cssVar, "#79c0ff"),
-      tls: v(EVENT_ENCODING.tls.cssVar, "#7ee787"),
-      http: v(EVENT_ENCODING.http.cssVar, "#d2a8ff"),
-      bulk: v(EVENT_ENCODING.bulk.cssVar, "#ffa657"),
-      other: v(EVENT_ENCODING.other.cssVar, "#a3acb9"),
+      dns: v(MARK_ENCODING.dns.cssVar, "#79c0ff"),
+      tls: v(MARK_ENCODING.tls.cssVar, "#7ee787"),
+      http: v(MARK_ENCODING.http.cssVar, "#d2a8ff"),
+      bulk: v(MARK_ENCODING.bulk.cssVar, "#ffa657"),
+      other: v(MARK_ENCODING.other.cssVar, "#a3acb9"),
+      wifi_mgmt: v(MARK_ENCODING.wifi_mgmt.cssVar, "#56d4dd"),
+      wifi_probe: v(MARK_ENCODING.wifi_probe.cssVar, "#d2a8ff"),
+      wifi_data: v(MARK_ENCODING.wifi_data.cssVar, "#7ee787"),
+      wifi_deauth: v(MARK_ENCODING.wifi_deauth.cssVar, "#ff7b72"),
     },
     score: {
       High: v("--wl-score-high", "#ff7b72"),

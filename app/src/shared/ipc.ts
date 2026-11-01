@@ -142,7 +142,8 @@ export async function pickCaptureFile(): Promise<string | null> {
   if (!isTauri()) {
     // Dev bridge: the capture to open comes from `?capture=<absolute path>`.
     if (devBridge()) return new URLSearchParams(window.location.search).get("capture");
-    return "/mock/office-beacon.pcap";
+    // `?mock=wifi` picks the 802.11 sample, so re-opening keeps the same capture.
+    return new URLSearchParams(window.location.search).get("mock") === "wifi" ? "/mock/lakeside-wifi.pcap" : "/mock/office-beacon.pcap";
   }
   const { open } = await import("@tauri-apps/plugin-dialog");
   const picked = await open({

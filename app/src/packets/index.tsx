@@ -1,5 +1,6 @@
-// Packet pane (Agent D): frames of the selected flow, the decode tree and a
-// hex view of the selected frame, with tree <-> byte highlighting both ways.
+// Packet pane (Agent D): frames of the selected flow (or, on 802.11
+// captures, of the focused device), the decode tree and a hex view of the
+// selected frame, with tree <-> byte highlighting both ways.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FrameRef } from "../shared/bindings/FrameRef";
 import type { PacketView } from "../shared/bindings/PacketView";
@@ -9,10 +10,12 @@ import { formatTs } from "../shared/format";
 import { WalleyeError, api } from "../shared/ipc";
 import { useSelection } from "../shared/selection";
 import { useSession } from "../shared/session";
+import { isWifiCapture } from "../shared/wifi";
 import { DecodeTree } from "./DecodeTree";
 import { FrameList } from "./FrameList";
 import { ancestorIds, deepestNodeAt, effectiveRange, flattenTree, hex2, parseHex, truncationNote, type NodeId } from "./hex";
 import { HexView } from "./HexView";
+import { fetchSource, frameSource, sourceKey, sourceTitle, type FrameSource } from "./source";
 import "./packets.css";
 
 type Load<T> = { status: "idle" } | { status: "loading" } | { status: "ok"; data: T } | { status: "error"; error: WalleyeError };
@@ -20,8 +23,8 @@ type Load<T> = { status: "idle" } | { status: "loading" } | { status: "ok"; data
 const IDLE = { status: "idle" } as const;
 const LOADING = { status: "loading" } as const;
 
-function useLoad<T>(key: number | null, enabled: boolean, fetch: (k: number) => Promise<T>): Load<T> {
-  const [state, setState] = useState<{ key: number | null; load: Load<T> }>({ key: null, load: { status: "idle" } });
+function useLoad<K extends number | string, T>(key: K | null, enabled: boolean, fetch: (k: K) => Promise<T>): Load<T> {
+  const [state, setState] = useState<{ key: K | null; load: Load<T> }>({ key: null, load: { status: "idle" } });
   useEffect(() => {
     if (key === null || !enabled) return;
     let live = true;
@@ -45,12 +48,26 @@ function useLoad<T>(key: number | null, enabled: boolean, fetch: (k: number) => 
 export function PacketPane() {
   const session = useSession((s) => s.session);
   const flowId = useSelection((s) => s.flow_ids[0] ?? null);
+  const device = useSelection((s) => s.device);
+  const timeRange = useSelection((s) => s.time_range);
   const frameNo = useSelection((s) => s.frame_no);
   const selectFrame = useSelection((s) => s.selectFrame);
   const [status, setStatus] = useState("");
+  const wifi = isWifiCapture(session?.capture);
 
-  const frames = useLoad<FrameRef[]>(flowId, !!session, api.flowFrames);
-  const packet = useLoad<PacketView>(frameNo, !!session, api.packet);
+  // Flow frames when a flow is selected, else the focused device's frames.
+  const source = useMemo<FrameSource>(
+    () => frameSource({ flow_ids: flowId === null ? [] : [flowId], device, time_range: timeRange }),
+    [flowId, device, timeRange],
+  );
+  const srcKey = sourceKey(source);
+  const sourceRef = useRef(source);
+  useEffect(() => {
+    sourceRef.current = source;
+  });
+  const fetchFrames = useCallback(() => fetchSource(sourceRef.current, api), []);
+  const frames = useLoad<string, FrameRef[]>(srcKey, !!session, fetchFrames);
+  const packet = useLoad<number, PacketView>(frameNo, !!session, api.packet);
 
   const frameList = useMemo(() => (frames.status === "ok" ? frames.data : []), [frames]);
   const view = packet.status === "ok" ? packet.data : null;
@@ -143,8 +160,8 @@ export function PacketPane() {
 
   const commands = useMemo<Command[]>(
     () => [
-      { id: "packets.next-frame", title: "Next frame in flow", group: "Packets", shortcut: "]", run: () => step(1) },
-      { id: "packets.prev-frame", title: "Previous frame in flow", group: "Packets", shortcut: "[", run: () => step(-1) },
+      { id: "packets.next-frame", title: "Next frame in flow or device list", group: "Packets", shortcut: "]", run: () => step(1) },
+      { id: "packets.prev-frame", title: "Previous frame in flow or device list", group: "Packets", shortcut: "[", run: () => step(-1) },
       {
         id: "packets.pin-frame",
         title: "Pin selected frame to case",
@@ -191,16 +208,27 @@ export function PacketPane() {
       ) : (
         <div className="wl-packets-body">
           <div className="wl-packets-col wl-packets-frames">
-            {flowId === null ? (
-              <p className="wl-empty">Select a session to list its frames.</p>
+            {source.kind !== "none" && (
+              <p className="wl-packets-source" data-testid="frame-source">
+                {sourceTitle(source, frames.status === "ok" ? frameList.length : null)}
+              </p>
+            )}
+            {source.kind === "none" ? (
+              <p className="wl-empty">
+                {wifi
+                  ? "Select an access point, client or Wi-Fi frame (or a device lane in the timeline) to list its frames."
+                  : "Select a session to list its frames."}
+              </p>
             ) : frames.status === "error" ? (
               <p className="wl-empty wl-error-text" role="alert">
-                ⚠ Could not list frames of flow {flowId}: {frames.error.message}
+                ⚠ Could not list {sourceTitle(source, null).toLowerCase()}: {frames.error.message}
               </p>
             ) : frames.status === "loading" ? (
               <p className="wl-empty">Loading frames…</p>
+            ) : frameList.length === 0 ? (
+              <p className="wl-empty">{source.kind === "device" && source.timeRange ? "No frames of this device in the selected time range." : "No frames."}</p>
             ) : (
-              <FrameList frames={frameList} selected={frameNo} onSelect={selectFrame} />
+              <FrameList frames={frameList} selected={frameNo} onSelect={selectFrame} label={sourceTitle(source, frameList.length)} />
             )}
           </div>
           <div className="wl-packets-col wl-packets-tree">

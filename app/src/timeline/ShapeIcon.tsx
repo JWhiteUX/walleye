@@ -1,9 +1,8 @@
-import type { EventKind } from "../shared/bindings/EventKind";
-import { EVENT_ENCODING } from "../shared/encoding";
+import { MARK_ENCODING, type MarkKind } from "../shared/encoding";
 
-/** Inline SVG of an event kind's mark, matching the canvas shapes. Decorative. */
-export function ShapeIcon({ kind, size = 10 }: { kind: EventKind; size?: number }) {
-  const { shape, cssVar } = EVENT_ENCODING[kind];
+/** Inline SVG of a mark kind's shape, matching the canvas shapes. Decorative. */
+export function ShapeIcon({ kind, size = 10 }: { kind: MarkKind; size?: number }) {
+  const { shape, cssVar } = MARK_ENCODING[kind];
   const colour = `var(${cssVar})`;
   const c = 5;
   const r = 4;
@@ -31,6 +30,24 @@ export function ShapeIcon({ kind, size = 10 }: { kind: EventKind; size?: number 
         />
       );
       break;
+    case "ring":
+      el = <circle cx={c} cy={c} r={r * 0.75} stroke={colour} strokeWidth={r * 0.5} fill="none" />;
+      break;
+    case "triangle-down":
+      el = <polygon points={`${c},${c + r} ${c + r},${c - r * 0.85} ${c - r},${c - r * 0.85}`} fill={colour} />;
+      break;
+    case "bar":
+      el = <rect x={c - r * 0.45} y={c - r} width={r * 0.9} height={r * 2} fill={colour} />;
+      break;
+    case "star": {
+      const pts = Array.from({ length: 16 }, (_, i) => {
+        const a = (i * Math.PI) / 8 - Math.PI / 2;
+        const rr = i % 2 === 0 ? r * 1.1 : r * 0.45;
+        return `${(c + rr * Math.cos(a)).toFixed(2)},${(c + rr * Math.sin(a)).toFixed(2)}`;
+      }).join(" ");
+      el = <polygon points={pts} fill={colour} />;
+      break;
+    }
   }
   return (
     <svg width={size} height={size} viewBox="0 0 10 10" aria-hidden="true" focusable="false" data-shape={shape}>
