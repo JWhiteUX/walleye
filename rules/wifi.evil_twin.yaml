@@ -3,8 +3,10 @@
 # the weaker one, which can then intercept their traffic. Mesh and multi-band
 # networks advertise the same security on every BSSID and never fire; hidden
 # SSIDs and factory-default names (two neighbours' "linksys") are skipped.
+# {ssid} arrives already quoted (walleye_core::text::quote_ssid); {channel}
+# names the band too, since channel numbers repeat across 2.4/5/6 GHz.
 id: wifi.evil_twin
-title: "Possible evil twin of \"{ssid}\" from {bssid}"
+title: "Possible evil twin of {ssid} from {bssid}"
 detector: wifi_evil_twin
 attack_technique: T1557
 params:
@@ -19,4 +21,4 @@ weights:
   appeared_later: 15
   oui_mismatch: 10
 min_score: 40
-explanation: "{bssid} advertises \"{ssid}\" as {security} on {channel}, while {original_bssid} advertises it as {original_security} on {original_channel} ({originals} protected BSSID(s)); the weaker one appeared {delay_s}s after the original, {frames} frames [{breakdown}]"
+explanation: "{bssid} advertises {ssid} as {security} on {channel}, while {original_bssid} advertises it as {original_security} on {original_channel} ({originals} protected BSSID(s)); the weaker one appeared {delay_s}s after the original, {frames} frames [{breakdown}]"
