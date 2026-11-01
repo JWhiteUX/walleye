@@ -309,7 +309,11 @@ function QueueView() {
                           {ssidContext(f) !== null && (
                             <>
                               {" · SSID "}
-                              <span className="wl-mono">“{visible(ssidContext(f)!)}”</span>
+                              {/* Own boxed element, no quote glyphs around it: quotes inside
+                                  the SSID can't close it early and forge the text after it. */}
+                              <span className="wl-mono wl-q-ssid" data-testid="queue-ssid">
+                                {visible(ssidContext(f)!)}
+                              </span>
                             </>
                           )}
                         </>

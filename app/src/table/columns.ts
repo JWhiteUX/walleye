@@ -9,7 +9,7 @@ import type { WifiApRow } from "../shared/bindings/WifiApRow";
 import type { WifiClientRow } from "../shared/bindings/WifiClientRow";
 import type { WifiRow } from "../shared/bindings/WifiRow";
 import { formatBytes, formatDuration, formatTs, protoName, visible } from "../shared/format";
-import { macLabel, ssidText, wifiKindLabel } from "../shared/wifi";
+import { macLabel, quoteSsid, ssidText, wifiKindLabel } from "../shared/wifi";
 import type { TableView } from "./store";
 
 export type AnyRow = FlowRow | DnsRow | HttpRow | TlsRow | FileRow | WifiRow | WifiApRow | WifiClientRow;
@@ -42,8 +42,19 @@ const bytes = (k: string) => (r: Record<string, unknown>) => (typeof r[k] === "n
 const ts = (k: string) => (r: Record<string, unknown>) => (typeof r[k] === "number" ? formatTs(r[k] as number) : "");
 // 802.11: MACs carry a text marker when randomized; SSIDs pass through visible().
 const mac = (k: string) => (r: Record<string, unknown>) => (typeof r[k] === "string" ? macLabel(visible(r[k] as string)) : "");
-const macs = (k: string) => (r: Record<string, unknown>) =>
-  ((r[k] as string[] | undefined) ?? []).map((m) => macLabel(visible(m))).join(", ");
+/** Most list items a cell renders; the rest become "… N more" (a hostile row can't build a huge cell). */
+export const LIST_CELL_MAX = 8;
+/** Each item is clipped too (SSIDs are ≤ 32 bytes, but don't trust that here). */
+const ITEM_MAX_CHARS = 64;
+
+/** "a, b, c … 5 more": at most `max` items, each through `fmt`. */
+export function listCell(items: unknown, fmt: (s: string) => string, max: number = LIST_CELL_MAX): string {
+  const list = Array.isArray(items) ? items.filter((x): x is string => typeof x === "string") : [];
+  const shown = list.slice(0, max).map((s) => fmt(s.length > ITEM_MAX_CHARS ? `${s.slice(0, ITEM_MAX_CHARS)}…` : s));
+  const rest = list.length - shown.length;
+  return shown.join(", ") + (rest > 0 ? ` … ${rest.toLocaleString("en-US")} more` : "");
+}
+const macs = (k: string) => (r: Record<string, unknown>) => listCell(r[k], (m) => macLabel(visible(m)));
 const dbm = (k: string) => (r: Record<string, unknown>) => (typeof r[k] === "number" ? `${r[k] as number} dBm` : "");
 const apSsid = (r: Record<string, unknown>) => visible(ssidText(r.ssid as string | null).text);
 const frameSsid = (r: Record<string, unknown>) => visible(ssidText(r.ssid as string | null, String(r.kind ?? "")).text);
@@ -142,7 +153,7 @@ export const COLUMNS: Record<TableView, ColumnSpec[]> = {
     col("mac", "Client", 220, mac("mac"), { field: "client.mac", mono: true }),
     col("frames", "Frames", 72, num("frames"), { field: "client.frames", align: "right" }),
     col("signal_max", "Signal", 80, dbm("signal_max"), { field: "client.signal", align: "right" }),
-    col("probed_ssids", "Probed SSIDs", 260, (r) => visible(((r.probed_ssids as string[] | undefined) ?? []).join(", ")), {
+    col("probed_ssids", "Probed SSIDs", 260, (r) => listCell(r.probed_ssids, (s) => quoteSsid(visible(s))), {
       field: "client.probed",
       sortable: false,
     }),

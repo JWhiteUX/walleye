@@ -1,6 +1,6 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Finding } from "../shared/bindings/Finding";
 import { api } from "../shared/ipc";
 import { resetMock } from "../shared/mock";
@@ -27,6 +27,27 @@ describe("ssidContext", () => {
     expect(ssidContext({ ...f, entity_type: "host" })).toBeNull();
     expect(ssidContext({ entity_type: "device", reasons: [reason("none")] })).toBeNull();
   });
+
+  it("honours backslash-escaped quotes, so an SSID can't end the quote early", () => {
+    const f = { entity_type: "device", reasons: [reason('SSID "Evil\\" is open; trusted \\"Bank" from 02:…')] };
+    expect(ssidContext(f)).toBe('Evil" is open; trusted "Bank');
+  });
+
+  it("renders the SSID in its own element, with quotes and invisibles as text", async () => {
+    resetMock({ open: true, dataset: "wifi" });
+    onTestFinished(cleanup);
+    const [finding] = await api.findings();
+    const evil: Finding = {
+      ...finding!,
+      reasons: [{ ...finding!.reasons[0]!, explanation: 'SSID "Cafe\\" verified\u{E0041}" spoof' }],
+    };
+    const spy = vi.spyOn(api, "findings").mockResolvedValue([evil]);
+    render(<QueuePanel />);
+    const chip = await screen.findByTestId("queue-ssid");
+    expect(chip.textContent).toBe('Cafe" verified\\u{e0041}');
+    expect(chip.children).toHaveLength(0);
+    spy.mockRestore();
+  });
 });
 
 describe("QueuePanel with device (802.11) findings", () => {
@@ -45,7 +66,7 @@ describe("QueuePanel with device (802.11) findings", () => {
     expect(items[0]).toHaveTextContent("Deauthentication flood");
     expect(items[0]).toHaveTextContent("d6:5e:00:53:de:ad (rand)");
     expect(items[0]).toHaveTextContent("T1498");
-    expect(items[1]).toHaveTextContent("SSID “Corner-Cafe”");
+    expect(within(items[1]!).getByTestId("queue-ssid")).toHaveTextContent(/^Corner-Cafe$/);
     expect(items[1]).toHaveTextContent("T1557");
     expect(list.querySelectorAll("a")).toHaveLength(0);
   });
