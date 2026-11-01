@@ -20,14 +20,37 @@ test-results/
 fixtures/external/
 fixtures/generated/
 cases/
+# Compressed or archived captures (samples are often shipped as .pcap.zip)
+*.pcap.gz
+*.pcap.xz
+*.pcap.zst
+*.pcapng.gz
+*.pcapng.xz
+*.pcapng.zst
+*.zip
+*.7z
+# TLS key logs are secrets (SSLKEYLOGFILE)
+*.keylog
+*keylog*.txt
 
 # Fuzzing output
 fuzz/artifacts/
 fuzz/coverage/
 
+# Signing keys and certificates
+*.pem
+*.key
+*.p12
+*.p8
+
+# Claude Code local state (CLAUDE.md and .claude/settings.json stay shareable)
+.claude/worktrees/
+.claude/settings.local.json
+
 # Env / OS / editors
 .env
 .env.*
+!.env.example
 .DS_Store
 .idea/
 .vscode/
