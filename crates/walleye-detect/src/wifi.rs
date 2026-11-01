@@ -62,6 +62,8 @@ const MAX_RESP_SSIDS: usize = 256;
 const MAX_BEACON_SSIDS: usize = 64;
 /// Recent (client, SSID) probe requests remembered for the echo signal.
 const MAX_PROBES: usize = 100_000;
+/// Longest wait between futile deauth-map sweeps, in windows.
+const MAX_SWEEP_BACKOFF: i64 = 64;
 /// SSIDs are at most 32 bytes on the air.
 const MAX_SSID: usize = 32;
 /// Sub-buckets of the deauth sliding window (the window is approximated to
@@ -180,12 +182,19 @@ fn push_notes(explanation: &mut String, notes: &[String]) {
     }
 }
 
+/// An SSID for splicing inside `"…"` in a title or explanation: printable
+/// text (`display`) with `\` and `"` escaped, so a crafted SSID cannot close
+/// the quote and forge the text that follows.
+fn ssid_text(s: &str) -> String {
+    display(s).replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 fn examples<'a>(it: impl Iterator<Item = &'a str>, n: usize, quote: bool) -> String {
     let v: Vec<String> = it
         .take(n)
         .map(|s| {
             if quote {
-                format!("\"{}\"", display(s))
+                format!("\"{}\"", ssid_text(s))
             } else {
                 display(s)
             }
@@ -199,6 +208,52 @@ fn examples<'a>(it: impl Iterator<Item = &'a str>, n: usize, quote: bool) -> Str
 }
 
 // ---------------------------------------------------------------- deauth --
+
+/// Beacon signals remembered per AP (the reference is their median).
+const SIG_RING: usize = 16;
+/// Signal deltas (deauth − reference beacons) histogram: −60..=60 dB.
+const DELTA_SPAN: i16 = 60;
+const DELTA_BINS: usize = (2 * DELTA_SPAN + 1) as usize;
+
+/// What one BSSID advertised, and its own recent beacon signal.
+#[derive(Debug)]
+pub(crate) struct ApInfo {
+    /// First SSID it advertised ("" = hidden).
+    ssid: String,
+    ring: [i16; SIG_RING],
+    /// Beacons with a signal reading.
+    sig_n: u64,
+    last_beacon: Ts,
+}
+
+impl ApInfo {
+    fn new(ssid: &str) -> Self {
+        Self {
+            ssid: ssid.to_string(),
+            ring: [0; SIG_RING],
+            sig_n: 0,
+            last_beacon: Ts::MIN,
+        }
+    }
+
+    fn record(&mut self, ts: Ts, sig: i16) {
+        self.ring[(self.sig_n % SIG_RING as u64) as usize] = sig;
+        self.sig_n += 1;
+        self.last_beacon = ts;
+    }
+
+    /// Median signal of the AP's last beacons, if it beaconed enough and
+    /// recently enough to compare against a frame at `ts`.
+    fn reference(&self, ts: Ts, min_beacons: u64, max_age_us: i64) -> Option<i16> {
+        if self.sig_n < min_beacons.max(1) || ts.saturating_sub(self.last_beacon) > max_age_us {
+            return None;
+        }
+        let n = (self.sig_n as usize).min(SIG_RING);
+        let mut v = self.ring;
+        v[..n].sort_unstable();
+        Some(v[n / 2])
+    }
+}
 
 #[derive(Debug)]
 struct DeauthTx {
@@ -224,9 +279,72 @@ struct DeauthTx {
     eapol: u64,
     eapol_frames: Vec<FrameNo>,
     burst_until: Ts,
+    /// Unicast frames with a rejection reason (6/7) sent as the AP.
+    rejections: u64,
+    /// Histogram of (deauth signal - reference beacon median), allocated on
+    /// the first frame that has a reference.
+    deltas: Option<Box<[u32; DELTA_BINS]>>,
+    /// Frames compared against beacons, and how many of those against the
+    /// transmitter's *own* beacons.
+    ref_frames: u64,
+    ref_self: u64,
 }
 
 impl DeauthTx {
+    fn record_delta(&mut self, d: i16, own: bool) {
+        let h = self.deltas.get_or_insert_with(|| Box::new([0; DELTA_BINS]));
+        let i = (d.clamp(-DELTA_SPAN, DELTA_SPAN) + DELTA_SPAN) as usize;
+        h[i] = h[i].saturating_add(1);
+        self.ref_frames += 1;
+        if own {
+            self.ref_self += 1;
+        }
+    }
+
+    /// Median signal delta in dB over the compared frames.
+    fn median_delta(&self) -> Option<i16> {
+        let h = self.deltas.as_ref()?;
+        let total: u64 = h.iter().map(|&c| u64::from(c)).sum();
+        let mut acc = 0u64;
+        for (i, &c) in h.iter().enumerate() {
+            acc += u64::from(c);
+            if acc * 2 >= total && total > 0 {
+                return Some(i as i16 - DELTA_SPAN);
+            }
+        }
+        None
+    }
+
+    /// Share of compared frames at least `db` away from the reference, and
+    /// the median |delta| of those frames.
+    fn far(&self, db: f64) -> (f64, f64) {
+        let Some(h) = self.deltas.as_ref() else {
+            return (0.0, 0.0);
+        };
+        let far: Vec<(f64, u64)> = h
+            .iter()
+            .enumerate()
+            .map(|(i, &c)| (f64::from((i as i16 - DELTA_SPAN).abs()), u64::from(c)))
+            .filter(|(a, c)| *a >= db && *c > 0)
+            .collect();
+        let n: u64 = far.iter().map(|(_, c)| c).sum();
+        if n == 0 || self.ref_frames == 0 {
+            return (0.0, 0.0);
+        }
+        let mut sorted = far;
+        sorted.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut acc = 0;
+        let mut med = 0.0;
+        for (a, c) in sorted {
+            acc += c;
+            if acc * 2 >= n {
+                med = a;
+                break;
+            }
+        }
+        (n as f64 / self.ref_frames as f64, med)
+    }
+
     fn new(ts: Ts, sub_us: i64) -> Self {
         Self {
             count: 0,
@@ -247,6 +365,10 @@ impl DeauthTx {
             eapol: 0,
             eapol_frames: Vec::new(),
             burst_until: Ts::MIN,
+            rejections: 0,
+            deltas: None,
+            ref_frames: 0,
+            ref_self: 0,
         }
     }
 
@@ -273,12 +395,17 @@ struct DeauthState {
     min_count: u32,
     handshake_us: i64,
     self_reasons: Vec<u16>,
+    rejection_reasons: Vec<u16>,
+    min_ref_beacons: u64,
+    ref_age_us: i64,
     txs: HashMap<String, DeauthTx>,
     /// Address (BSSID or target) → transmitter whose burst touched it.
     burst_keys: HashMap<String, String>,
     suppressed: u64,
     dropped: u64,
     prune_after: Ts,
+    /// Current wait between transmitter-map sweeps (µs).
+    sweep_backoff: i64,
 }
 
 impl DeauthState {
@@ -289,21 +416,27 @@ impl DeauthState {
             sub_us: (window_us / SUB as i64).max(1),
             min_count: rule.num("min_count").ceil() as u32,
             handshake_us: (rule.num("handshake_window_s") * 1e6) as i64,
-            self_reasons: rule
-                .nums("self_leave_reasons")
-                .iter()
-                .filter(|r| (0.0..=65535.0).contains(*r))
-                .map(|r| *r as u16)
-                .collect(),
+            self_reasons: codes(rule.nums("self_leave_reasons")),
+            rejection_reasons: codes(rule.nums("rejection_reasons")),
+            min_ref_beacons: rule.num("min_ref_beacons") as u64,
+            ref_age_us: (rule.num("ref_max_age_s") * 1e6) as i64,
             txs: HashMap::new(),
             burst_keys: HashMap::new(),
             suppressed: 0,
             dropped: 0,
             prune_after: Ts::MIN,
+            sweep_backoff: 0,
         }
     }
 
-    fn observe_deauth(&mut self, row: &WifiRow, tx: &str, dst: Option<&str>, bssid: Option<&str>) {
+    fn observe_deauth(
+        &mut self,
+        row: &WifiRow,
+        tx: &str,
+        dst: Option<&str>,
+        bssid: Option<&str>,
+        aps: &HashMap<String, ApInfo>,
+    ) {
         let station_to_own_ap = bssid.is_some_and(|b| b != tx) && dst.is_some() && dst == bssid;
         if station_to_own_ap && row.reason.is_some_and(|r| self.self_reasons.contains(&r)) {
             self.suppressed += 1;
@@ -315,12 +448,23 @@ impl DeauthState {
             // (the gate is per window), so forgetting them loses nothing. A
             // random-source flood therefore cannot lock a later attacker out.
             // At most one sweep per sub-bucket keeps this O(1) amortised.
+            // Transmitters past the gate are never evicted, so when the map
+            // is full of them sweeps free nothing: back off exponentially
+            // (up to MAX_SWEEP_BACKOFF windows) until one frees space again.
             if row.ts >= self.prune_after {
                 let horizon = row.ts.saturating_sub(self.sub_us * SUB as i64);
                 let min = self.min_count;
+                let before = self.txs.len();
                 self.txs
                     .retain(|_, t| t.peak >= min || t.last_ts >= horizon);
-                self.prune_after = row.ts.saturating_add(self.sub_us);
+                let freed = before - self.txs.len();
+                self.sweep_backoff = if freed * 16 < MAX_DEAUTH_TX {
+                    (self.sweep_backoff.max(self.sub_us) * 2)
+                        .min(self.sub_us * SUB as i64 * MAX_SWEEP_BACKOFF)
+                } else {
+                    self.sub_us
+                };
+                self.prune_after = row.ts.saturating_add(self.sweep_backoff);
             }
             if self.txs.len() >= MAX_DEAUTH_TX {
                 self.dropped += 1;
@@ -349,7 +493,26 @@ impl DeauthState {
             if t.reasons.len() < MAX_SMALL || t.reasons.contains_key(&r) {
                 *t.reasons.entry(r).or_default() += 1;
             }
+            if self.rejection_reasons.contains(&r)
+                && bssid == Some(tx)
+                && dst.is_some_and(|d| !is_group(d))
+            {
+                t.rejections += 1;
+            }
         }
+        // Signal consistency: compare with the transmitter's own beacons, or
+        // (for a third-party sender) with the beacons of the BSSID it claims.
+        let delta = row.signal_dbm.and_then(|sig| {
+            let (min_b, age) = (self.min_ref_beacons, self.ref_age_us);
+            if let Some(r) = aps.get(tx).and_then(|a| a.reference(row.ts, min_b, age)) {
+                return Some((sig.saturating_sub(r), true));
+            }
+            bssid
+                .filter(|b| *b != tx)
+                .and_then(|b| aps.get(b))
+                .and_then(|a| a.reference(row.ts, min_b, age))
+                .map(|r| (sig.saturating_sub(r), false))
+        });
         let n = t.bump(row.ts, sub_us);
         t.peak = t.peak.max(n);
         if n >= self.min_count {
@@ -358,6 +521,11 @@ impl DeauthState {
             // AP's housekeeping kicks spread over an hour reach many clients
             // too, and must not add up).
             t.burst_frames += 1;
+            // Only burst frames: a spoofer hiding a flood among the real
+            // AP's housekeeping must not be averaged away.
+            if let Some((d, own)) = delta {
+                t.record_delta(d, own);
+            }
             match dst {
                 Some(d) if is_group(d) => t.broadcast += 1,
                 Some(d) if !t.targets.contains(d) => {
@@ -402,10 +570,17 @@ impl DeauthState {
     }
 }
 
+fn codes(v: &[f64]) -> Vec<u16> {
+    v.iter()
+        .filter(|r| (0.0..=65535.0).contains(*r))
+        .map(|r| *r as u16)
+        .collect()
+}
+
 fn analyze_deauth(
     st: &DeauthState,
     rule: &Rule,
-    aps: &HashMap<String, String>,
+    aps: &HashMap<String, ApInfo>,
     out: &mut Vec<Hit>,
 ) {
     for (tx, t) in &st.txs {
@@ -413,6 +588,8 @@ fn analyze_deauth(
             continue;
         }
         let n_targets = t.targets.len();
+        // "Beacons" = the address advertises a network (beacon or probe
+        // response) somewhere in the capture.
         let beacons = aps.contains_key(tx.as_str());
         let s_rate = ramp(f64::from(t.peak), 0.0, rule.num("rate_full"));
         // Supporting signals count only as much as the flood is strong.
@@ -420,6 +597,7 @@ fn analyze_deauth(
         let s_bcast = bcast_share * s_rate;
         let s_targets = ramp(n_targets as f64, 1.0, rule.num("targets_full")) * s_rate;
         let mut notes = Vec::new();
+        let mut factors: Vec<f64> = Vec::new();
         let mut s_spoof: f64 = 0.0;
         if t.as_ap > 0 && !beacons {
             s_spoof = 1.0;
@@ -434,28 +612,119 @@ fn analyze_deauth(
                 display(tx)
             ));
         }
-        if t.as_ap > 0 && randomized(tx) {
-            let r = rule.num("randomized_strength");
-            if r > s_spoof {
-                s_spoof = r;
+        if !beacons && randomized(tx) {
+            // Only a note: many consumer APs use locally administered BSSIDs
+            // for extra or hidden SSIDs, so the bit scores nothing by itself.
+            notes.push(format!("{} is locally administered", display(tx)));
+        }
+        // Signal consistency (the standard WIDS check): deauths from the
+        // real AP arrive as loud as its own beacons; a spoofer is elsewhere.
+        let mut s_mismatch = 0.0;
+        let delta = t.median_delta();
+        let referenced = t.ref_frames * 2 >= t.burst_frames;
+        let mut matched = false;
+        if let (Some(d), true) = (delta, referenced) {
+            let mut ad = f64::from(d.abs());
+            let own = t.ref_self * 2 >= t.ref_frames;
+            // A spoofer mixed into a genuine AP's own burst: the median may
+            // match while a large minority of frames is far off.
+            let (far_share, far_med) = t.far(rule.num("signal_mismatch_db"));
+            let mixed = far_share >= rule.num("mixed_share") && ad < rule.num("signal_mismatch_db");
+            if mixed {
+                ad = far_med;
+                notes.push(format!(
+                    "{}% of the burst frames are heard {} dB or more away from the beacons, the rest like the AP",
+                    fmt_num((far_share * 100.0).round(), 0),
+                    fmt_num(rule.num("signal_mismatch_db"), 0)
+                ));
             }
-            notes.push(format!("BSSID {} is locally administered", display(tx)));
+            if own && !mixed && ad <= rule.num("signal_match_db") {
+                matched = true;
+                let f = rule.num("genuine_factor");
+                factors.push(f);
+                notes.push(format!(
+                    "deauth signal is within {} dB of {}'s own beacons (median of {} frames), so the real AP likely sent these; score ×{}",
+                    d.abs(),
+                    display(tx),
+                    t.ref_frames,
+                    fmt_num(f, 2)
+                ));
+            } else if ad >= rule.num("signal_mismatch_db") {
+                s_mismatch = 0.5
+                    + 0.5
+                        * ramp(
+                            ad,
+                            rule.num("signal_mismatch_db"),
+                            rule.num("signal_mismatch_full_db"),
+                        );
+                let whom = if own {
+                    "AP it claims to be"
+                } else {
+                    "network it claims"
+                };
+                notes.push(if mixed {
+                    format!(
+                        "those far-off frames are a median {} dB from the beacons of the {whom}: someone else is sending as it",
+                        fmt_num(ad, 0)
+                    )
+                } else {
+                    format!(
+                        "deauth signal is {} dB {} than the beacons of the {whom} (median of {} frames): sent from somewhere else",
+                        d.abs(),
+                        if d > 0 { "stronger" } else { "weaker" },
+                        t.ref_frames
+                    )
+                });
+            }
+        }
+        if matched && t.rejections * 5 >= t.count * 4 {
+            let f = rule.num("rejection_factor");
+            factors.push(f);
+            notes.push(format!(
+                "{} of {} are reason {} rejections unicast to stations of its own network; score ×{}",
+                t.rejections,
+                t.count,
+                rule.nums("rejection_reasons")
+                    .iter()
+                    .map(|r| fmt_num(*r, 0))
+                    .collect::<Vec<_>>()
+                    .join("/"),
+                fmt_num(f, 2)
+            ));
+        }
+        let span_s = t.last_ts.saturating_sub(t.first_ts) as f64 / 1e6;
+        if n_targets <= 1 && t.broadcast == 0 && span_s >= rule.num("long_single_s") {
+            let f = rule.num("single_target_factor");
+            factors.push(f);
+            notes.push(format!(
+                "every burst frame went to one station over {} min, which is how an AP repeatedly rejecting a stuck client looks; score ×{}",
+                fmt_num(span_s / 60.0, 1),
+                fmt_num(f, 2)
+            ));
         }
         let s_hs = ramp(t.eapol as f64, 0.0, rule.num("handshake_full")) * s_rate;
+        let factor: f64 = factors.iter().product();
         let pts = [
-            ("rate", rule.weight("rate") * s_rate),
-            ("broadcast", rule.weight("broadcast") * s_bcast),
-            ("targets", rule.weight("targets") * s_targets),
-            ("spoofed_bssid", rule.weight("spoofed_bssid") * s_spoof),
-            ("handshake", rule.weight("handshake") * s_hs),
+            ("rate", rule.weight("rate") * s_rate * factor),
+            ("broadcast", rule.weight("broadcast") * s_bcast * factor),
+            ("targets", rule.weight("targets") * s_targets * factor),
+            (
+                "spoofed_bssid",
+                rule.weight("spoofed_bssid") * s_spoof * factor,
+            ),
+            ("handshake", rule.weight("handshake") * s_hs * factor),
+            (
+                "signal_mismatch",
+                rule.weight("signal_mismatch") * s_mismatch * factor,
+            ),
         ];
         let points: f64 = pts.iter().map(|(_, p)| p).sum();
         if points < rule.def.min_score || points <= 0.0 {
             continue;
         }
         let bssid = t.bssids.iter().next().map(String::as_str);
-        let ssid = match bssid.and_then(|b| aps.get(b)) {
-            Some(s) if !s.is_empty() => format!("\"{}\"", display(s)),
+        let ssid = match bssid.and_then(|b| aps.get(b)).map(|a| a.ssid.as_str()) {
+            Some(s) if !s.is_empty() => format!("\"{}\"", ssid_text(s)),
             Some(_) => "a hidden network".into(),
             None => "an unknown network".into(),
         };
@@ -694,7 +963,7 @@ fn analyze_twin(col: &TwinCol, rule: &Rule, rule_idx: usize, out: &mut Vec<Hit>)
                 continue;
             }
             let mut v = BTreeMap::new();
-            v.insert("ssid".into(), display(ssid));
+            v.insert("ssid".into(), ssid_text(ssid));
             v.insert("bssid".into(), display(&w.bssid));
             v.insert("security".into(), SECURITIES[w_sec].to_string());
             v.insert("channel".into(), channels_text(&w.channels));
@@ -765,6 +1034,8 @@ struct KarmaCol {
     probes: HashMap<u64, (Ts, FrameNo)>,
     max_echo_us: i64,
     dropped: u64,
+    /// Earliest ts of the next probe-map sweep.
+    prune_after: Ts,
 }
 
 impl KarmaCol {
@@ -782,8 +1053,15 @@ impl KarmaCol {
     fn observe_probe(&mut self, row: &WifiRow, client: &str, ssid: &str) {
         let key = hash64(&(client, ssid));
         if self.probes.len() >= MAX_PROBES && !self.probes.contains_key(&key) {
-            let horizon = row.ts.saturating_sub(self.max_echo_us);
-            self.probes.retain(|_, (ts, _)| *ts >= horizon);
+            // At most one sweep per echo window: when every entry is still
+            // fresh a sweep frees nothing, and repeating it per probe would
+            // be O(MAX_PROBES) per row (CPU DoS). Until the next sweep is
+            // due, new probes are dropped and counted.
+            if row.ts >= self.prune_after {
+                let horizon = row.ts.saturating_sub(self.max_echo_us);
+                self.probes.retain(|_, (ts, _)| *ts >= horizon);
+                self.prune_after = row.ts.saturating_add(self.max_echo_us.max(1_000_000));
+            }
             if self.probes.len() >= MAX_PROBES {
                 self.dropped += 1;
                 return;
@@ -960,6 +1238,33 @@ fn analyze_karma(col: &KarmaCol, rule: &Rule, rule_idx: usize, out: &mut Vec<Hit
     }
 }
 
+/// Keep one hit per device (its strongest) and at most `max_findings` per
+/// rule, strongest first. A capture crafted with thousands of attacking MACs
+/// must not flood the queue; the top survivor says how many were dropped.
+fn cap_hits(mut hits: Vec<Hit>, rule: &Rule, out: &mut Vec<Hit>) {
+    hits.sort_by(|a, b| {
+        b.reason
+            .weight
+            .total_cmp(&a.reason.weight)
+            .then_with(|| a.entity.cmp(&b.entity))
+            .then_with(|| a.tiebreak.cmp(&b.tiebreak))
+    });
+    let mut seen = BTreeSet::new();
+    hits.retain(|h| seen.insert(h.entity.clone()));
+    let max = rule.num("max_findings") as usize;
+    if hits.len() > max {
+        let dropped = hits.len() - max;
+        hits.truncate(max);
+        if let Some(top) = hits.first_mut() {
+            top.reason.explanation.push_str(&format!(
+                " ({dropped} weaker {} device(s) not reported: max_findings = {max})",
+                rule.def.id
+            ));
+        }
+    }
+    out.extend(hits);
+}
+
 // ------------------------------------------------------------- collector --
 
 /// Streaming state for the single `for_each_wifi` pass.
@@ -970,8 +1275,8 @@ pub(crate) struct WifiCollector {
     want_karma: bool,
     twin: TwinCol,
     karma: KarmaCol,
-    /// BSSID → first SSID it advertised ("" = hidden).
-    aps: HashMap<String, String>,
+    /// BSSID → what it advertised and how loud its own beacons are.
+    aps: HashMap<String, ApInfo>,
 }
 
 impl WifiCollector {
@@ -1010,7 +1315,16 @@ impl WifiCollector {
                 let ssid = visible_ssid(row.ssid.as_deref());
                 if !self.aps.contains_key(bssid.as_ref()) && self.aps.len() < MAX_APS {
                     self.aps
-                        .insert(bssid.to_string(), ssid.unwrap_or("").to_string());
+                        .insert(bssid.to_string(), ApInfo::new(ssid.unwrap_or("")));
+                }
+                // The AP's own beacon signal is the reference that tells a
+                // genuine AP's deauths from a spoofer somewhere else.
+                let own = canon(row.tx.as_deref()).is_none_or(|t| t == bssid);
+                if row.kind == WifiKind::Beacon && own {
+                    if let (Some(a), Some(sig)) = (self.aps.get_mut(bssid.as_ref()), row.signal_dbm)
+                    {
+                        a.record(row.ts, sig);
+                    }
                 }
                 let Some(ssid) = ssid else {
                     return;
@@ -1054,7 +1368,7 @@ impl WifiCollector {
                 let dst = canon(row.dst.as_deref());
                 let bssid = canon(row.bssid.as_deref()).filter(|b| !is_group(b));
                 for st in &mut self.deauth {
-                    st.observe_deauth(row, &tx, dst.as_deref(), bssid.as_deref());
+                    st.observe_deauth(row, &tx, dst.as_deref(), bssid.as_deref(), &self.aps);
                 }
             }
             WifiKind::Eapol => {
@@ -1077,14 +1391,20 @@ impl WifiCollector {
     pub(crate) fn analyze(&self, rules: &RuleSet, out: &mut Vec<Hit>) {
         for st in &self.deauth {
             if let Some(rule) = rules.rules().get(st.rule_idx) {
-                analyze_deauth(st, rule, &self.aps, out);
+                let mut hits = Vec::new();
+                analyze_deauth(st, rule, &self.aps, &mut hits);
+                cap_hits(hits, rule, out);
             }
         }
         for (idx, rule) in rules.enabled("wifi_evil_twin") {
-            analyze_twin(&self.twin, rule, idx, out);
+            let mut hits = Vec::new();
+            analyze_twin(&self.twin, rule, idx, &mut hits);
+            cap_hits(hits, rule, out);
         }
         for (idx, rule) in rules.enabled("wifi_karma") {
-            analyze_karma(&self.karma, rule, idx, out);
+            let mut hits = Vec::new();
+            analyze_karma(&self.karma, rule, idx, &mut hits);
+            cap_hits(hits, rule, out);
         }
         // Cap counters are kept for debugging; they never change a score.
         let _ = (self.twin.dropped, self.karma.dropped);
@@ -1119,6 +1439,13 @@ mod tests {
             sibling_group("e8:00:5e:00:53:88"),
             sibling_group("e8:00:5f:00:53:88")
         );
+    }
+
+    #[test]
+    fn ssid_quotes_are_escaped() {
+        assert_eq!(ssid_text(r#"Free" ch 6 wpa3"#), r#"Free\" ch 6 wpa3"#);
+        assert_eq!(ssid_text(r#"a\"#), r#"a\\"#);
+        assert_eq!(examples(["x\"y"].into_iter(), 1, true), r#""x\"y""#);
     }
 
     #[test]
