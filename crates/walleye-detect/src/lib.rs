@@ -1,4 +1,5 @@
-//! Rule loader, beaconing and DNS detectors, scoring. Owner: Agent C.
+//! Rule loader, beaconing, DNS, HTTP and 802.11 detectors, scoring. Owner:
+//! Agent C (802.11: Agent W-C).
 //!
 //! ```text
 //! load_rules(dir) ─▶ RuleSet ─┐
@@ -22,6 +23,7 @@ mod dns;
 mod http;
 mod rules;
 mod util;
+mod wifi;
 
 use std::collections::{HashMap, HashSet};
 
@@ -34,8 +36,8 @@ pub use util::finding_id;
 
 use crate::util::{AddrClass, Hosts};
 
-/// Run every enabled rule over `src` and return per-host findings sorted by
-/// score (desc), then entity.
+/// Run every enabled rule over `src` and return per-entity findings (hosts,
+/// and 802.11 devices by MAC) sorted by score (desc), then entity.
 pub fn run(src: &dyn DetectSource, rules: &RuleSet, allow: &Allowlist) -> ApiResult<Vec<Finding>> {
     let mut hosts = Hosts::default();
     let mut bcol = beacon::Collector::default();
@@ -201,6 +203,14 @@ pub fn run(src: &dyn DetectSource, rules: &RuleSet, allow: &Allowlist) -> ApiRes
             ),
             _ => {}
         }
+    }
+    // 802.11 detectors: one pass over the `wifi` table (empty on wired
+    // captures, so wired results are unchanged). Device findings are keyed
+    // by MAC and never merge with host findings.
+    if wifi::wanted(rules) {
+        let mut wcol = wifi::WifiCollector::new(rules);
+        src.for_each_wifi(&mut |r| wcol.observe(r))?;
+        wcol.analyze(rules, &mut hits);
     }
     let _ = dcol.dropped_parents();
     Ok(combine::combine(hits, &hosts))

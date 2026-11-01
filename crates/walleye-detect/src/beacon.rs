@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use walleye_core::rules::render_template;
 use walleye_core::{Allowlist, Evidence, FlowId, FlowRow, FrameNo, Reason, Ts};
 
-use crate::combine::Hit;
+use crate::combine::{Entity, Hit};
 use crate::rules::Rule;
 use crate::util::{AddrClass, Hosts, display, fmt_num, has_suffix, median, ramp, round1};
 
@@ -499,7 +499,7 @@ pub(crate) fn finalize(
     }
     let title = render_template(&rule.def.title, &v);
     Some(Hit {
-        host: c.src,
+        entity: Entity::Host(c.src),
         rule_idx: c.rule_idx,
         detector_family: "beaconing",
         title,

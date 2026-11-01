@@ -1,4 +1,7 @@
-//! Combine rule hits into one finding per internal host (CONTRACTS §2).
+//! Combine rule hits into one finding per entity (CONTRACTS §2): internal
+//! hosts (`entity_type = "host"`) and 802.11 devices (`"device"`, by MAC,
+//! contract v2). Hits are keyed by entity type *and* entity, so a device
+//! finding never merges into a host finding.
 //!
 //! - Per (host, rule) only the strongest hit is kept (one beacon pair, one
 //!   domain), so a host with many mildly odd destinations does not add up
@@ -15,10 +18,19 @@ use walleye_core::{Finding, Reason, Ts};
 
 use crate::util::{Hosts, finding_id};
 
-/// One rule's contribution to one host.
+/// What a finding is about.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Entity {
+    /// Interned IP (`Hosts`).
+    Host(u32),
+    /// Canonical lowercase MAC of an 802.11 transmitter.
+    Device(String),
+}
+
+/// One rule's contribution to one entity.
 #[derive(Debug, Clone)]
 pub(crate) struct Hit {
-    pub(crate) host: u32,
+    pub(crate) entity: Entity,
     pub(crate) rule_idx: usize,
     /// "beaconing" | "dns": the finding's `detector` when this hit is on top.
     pub(crate) detector_family: &'static str,
@@ -39,25 +51,26 @@ fn better(a: &Hit, b: &Hit) -> bool {
 }
 
 pub(crate) fn combine(hits: Vec<Hit>, hosts: &Hosts) -> Vec<Finding> {
-    let mut best: BTreeMap<(u32, usize), Hit> = BTreeMap::new();
+    let mut best: BTreeMap<(Entity, usize), Hit> = BTreeMap::new();
     for h in hits {
         if h.reason.evidence.is_empty() || h.reason.weight <= 0.0 {
             continue;
         }
-        match best.get(&(h.host, h.rule_idx)) {
+        let key = (h.entity.clone(), h.rule_idx);
+        match best.get(&key) {
             Some(cur) if !better(&h, cur) => {}
             _ => {
-                best.insert((h.host, h.rule_idx), h);
+                best.insert(key, h);
             }
         }
     }
-    let mut per_host: BTreeMap<u32, Vec<Hit>> = BTreeMap::new();
-    for ((host, _), h) in best {
-        per_host.entry(host).or_default().push(h);
+    let mut per_entity: BTreeMap<Entity, Vec<Hit>> = BTreeMap::new();
+    for ((entity, _), h) in best {
+        per_entity.entry(entity).or_default().push(h);
     }
-    let mut findings: Vec<Finding> = per_host
+    let mut findings: Vec<Finding> = per_entity
         .into_iter()
-        .filter_map(|(host, mut hits)| {
+        .filter_map(|(entity, mut hits)| {
             hits.sort_by(|a, b| {
                 b.reason
                     .weight
@@ -66,15 +79,18 @@ pub(crate) fn combine(hits: Vec<Hit>, hosts: &Hosts) -> Vec<Finding> {
                     .then_with(|| a.tiebreak.cmp(&b.tiebreak))
             });
             let top = hits.first()?;
-            let entity = hosts.name(host).to_string();
+            let (entity_type, entity) = match entity {
+                Entity::Host(id) => ("host", hosts.name(id).to_string()),
+                Entity::Device(mac) => ("device", mac),
+            };
             let detector = top.detector_family.to_string();
             let score: f64 = hits.iter().map(|h| h.reason.weight).sum::<f64>().min(100.0);
             let score = (score * 10.0).round() / 10.0;
             Some(Finding {
-                finding_id: finding_id("host", &entity),
+                finding_id: finding_id(entity_type, &entity),
                 title: top.title.clone(),
                 detector,
-                entity_type: "host".into(),
+                entity_type: entity_type.into(),
                 entity,
                 score,
                 attack_technique: top.reason.attack_technique.clone(),
@@ -89,6 +105,7 @@ pub(crate) fn combine(hits: Vec<Hit>, hosts: &Hosts) -> Vec<Finding> {
         b.score
             .total_cmp(&a.score)
             .then_with(|| a.entity.cmp(&b.entity))
+            .then_with(|| a.entity_type.cmp(&b.entity_type))
     });
     findings
 }
