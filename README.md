@@ -16,7 +16,9 @@ Every finding, indicator and report line cites frame numbers and the capture's S
 
 ## Status
 
-This is the MVP. All of its acceptance gates pass:
+The MVP and Wi-Fi support are both on `main`, and every gate below passes.
+
+**MVP gates**
 
 | Gate | Target | Measured |
 |---|---|---|
@@ -27,9 +29,19 @@ This is the MVP. All of its acceptance gates pass:
 | Fuzzing, 10 min per target | no crashes | 15 of 15 targets clean |
 | Network calls at runtime | none | none, verified under a sandbox that denies all network access |
 
+**Wi-Fi gates**
+
+| Check | Measured |
+|---|---|
+| Real WiFi Coconut capture (1.2 M frames) | opened in 3.8 s (about 1,150 MB/s), every view under 15 ms, frame counts match Wireshark, 0 findings (the capture has no attacks) |
+| Detection eval, including generated deauth, evil-twin and karma attacks | attacker ranked first on 7 of 7; 0 % false positives on the benign captures |
+| Fuzzing the 802.11 parsers, 10 min per target | no crashes (5.3 M and 1.7 M inputs) |
+| Security review and code review | all findings fixed, with tests |
+
 More on these and on the known gaps:
 
-- [`docs/MVP_REPORT.md`](docs/MVP_REPORT.md): the full gate table, the known gaps and the v1 backlog.
+- [`docs/MVP_REPORT.md`](docs/MVP_REPORT.md): the full MVP gate table, the known gaps and the v1 backlog.
+- [`docs/CONTRACTS.md`](docs/CONTRACTS.md) §11: how 802.11 is decoded and indexed. Wi-Fi known gaps are listed in [PR #3](https://github.com/JWhiteUX/walleye/pull/3).
 - [`docs/BUILD_LOG.md`](docs/BUILD_LOG.md): the commands that produced each number, with their output.
 
 ## How it works
@@ -49,23 +61,38 @@ Interfaces between the parts are in [`docs/CONTRACTS.md`](docs/CONTRACTS.md). Th
 
 ## Getting started
 
-Requirements:
+### 1. Install the toolchain
 
-- Rust stable (via rustup)
-- Node 22+
-- pnpm 11
-- **macOS:** the Xcode command-line tools
-- **Linux:** the [Tauri prerequisites](https://tauri.app/start/prerequisites/)
+| Tool | Install |
+|---|---|
+| Rust stable | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
+| Node 22+ | from [nodejs.org](https://nodejs.org/) or `brew install node@22` |
+| pnpm 11 | `corepack enable` (the repo pins `pnpm@11.10.0`) |
+| **macOS:** Xcode command-line tools | `xcode-select --install` |
+| **Linux:** system libraries | see the [Tauri prerequisites](https://tauri.app/start/prerequisites/) |
+
+### 2. Clone and run
+
+```sh
+git clone https://github.com/JWhiteUX/walleye.git
+cd walleye
+pnpm install
+pnpm tauri dev        # run the app (UI hot-reloads)
+```
 
 The first build compiles DuckDB from source. It takes several minutes and uses a few GB in `target/`.
 
+To work on the UI alone, `pnpm dev` runs it in a browser against a built-in mock capture (add `?mock=wifi` to the URL for a Wi-Fi one). If you're new to Tauri, [`docs/DEV_SETUP.md`](docs/DEV_SETUP.md) explains how the UI and Rust sides talk to each other and where configuration lives.
+
+### 3. Build and install the app
+
 ```sh
-pnpm install
-pnpm tauri dev        # run the app (UI hot-reloads)
-pnpm tauri build      # package it (.app/.dmg on macOS; .deb/AppImage on Linux)
+pnpm tauri build
 ```
 
-To work on the UI alone, `pnpm dev` runs it in a browser against a built-in mock capture. If you're new to Tauri, [`docs/DEV_SETUP.md`](docs/DEV_SETUP.md) explains how the UI and Rust sides talk to each other and where configuration lives.
+The packages land in `target/release/bundle/`: `macos/Walleye.app` and `dmg/` on macOS, `deb/` and `appimage/` on Linux. On macOS, drag `Walleye.app` into Applications.
+
+The build isn't signed or notarized, so on first launch macOS says it can't verify the developer. Right-click the app, choose **Open**, then confirm. Or allow it under **System Settings → Privacy & Security**. You only need to do this once.
 
 ## Testing
 

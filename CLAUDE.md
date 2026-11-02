@@ -27,3 +27,4 @@ Tauri 2 desktop app · Rust workspace with native parsers (no Zeek) · DuckDB ov
 - The filter language compiles to parameterized SQL only.
 - Large fixtures live outside the repo in `$WALLEYE_FIXTURES` (default `~/.walleye-fixtures`) and are never committed.
 - Report results with command output; never claim a gate passed without it.
+- Keep `README.md` current: when a feature, gate result, command or setup step changes, update the README in the same PR.
