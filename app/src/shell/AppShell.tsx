@@ -2,6 +2,7 @@
 // queries, palette), resizable panes, the global key handler, F6 pane cycling.
 //
 //   ┌ header ───────────────────────────────────────────────┐
+//   │ scope bar (time, hosts, flows, device chips)           │
 //   │ timeline                                │ queue │ case │
 //   │─────────────────────────────────────────│       │      │
 //   │ session table                           │       │      │
@@ -23,6 +24,7 @@ import { FilterBar, type FilterBarHandle } from "./FilterBar";
 import { IngestDialog } from "./IngestDialog";
 import { formatShortcut, isMacPlatform } from "./keys";
 import { SavedQueries, type SavedQueriesHandle } from "./SavedQueries";
+import { ScopeBar } from "./ScopeBar";
 import { Splitter } from "./Splitter";
 import { useGlobalKeys } from "./useGlobalKeys";
 import { useIngest } from "./useIngest";
@@ -217,6 +219,8 @@ export function AppShell() {
         </button>
         <GlobalKeys />
       </header>
+
+      {session && <ScopeBar />}
 
       <main
         className="wl-main"

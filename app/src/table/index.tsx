@@ -196,6 +196,11 @@ export function SessionTable() {
   );
   useRegisterCommands(commands);
 
+  // What narrows this table besides the filter text (shown in the scope bar too).
+  const scopedBy = [
+    ...(time_range ? ["time"] : []),
+    ...(scopeHosts.length ? [scopeHosts.length === 1 ? "host" : `${scopeHosts.length} hosts`] : []),
+  ];
   const count =
     rows.total !== null ? `${rows.rows.length.toLocaleString()} of ${rows.total.toLocaleString()} rows` : `${rows.rows.length.toLocaleString()} rows`;
 
@@ -286,6 +291,11 @@ export function SessionTable() {
         <span aria-live="polite" data-testid="table-count">
           {session ? (rows.loading && rows.rows.length === 0 ? "Loading…" : count) : ""}
         </span>
+        {session && scopedBy.length > 0 && (
+          <span className="wl-table-scoped" data-testid="table-scoped" title="See the scope bar above the panes">
+            scoped by {scopedBy.join(" + ")}
+          </span>
+        )}
         {rows.elapsedMs !== null && session && <span>{rows.elapsedMs.toFixed(1)} ms</span>}
         {rows.sql && session && (
           <details className="wl-sql">
