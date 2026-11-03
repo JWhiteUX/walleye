@@ -8,19 +8,27 @@ Walleye is a desktop app for security analysts that analyzes packet captures (PC
 - **Suspicion queue:** hosts ranked by score. Each entry lists its reasons, their weights and the frames behind them.
 - **Case panel:** verdicts, pins and notes. Exports indicators (CSV/JSON) and a report (Markdown/PDF).
 
-The suspicion queue and the case panel share the right-hand column as two tabs, **Findings** and **Case** (switch with ⌘\ / Ctrl+\, or `g q` / `g c`). The Case tab shows the pin count and highlights it when something is pinned from another tab. On smaller windows the timeline and packet pane give up height first, so the session table always keeps room for several rows.
+How the screen is laid out:
 
-A scope bar under the header shows, as removable chips, everything that is narrowing the views: the time range, selected hosts and flows, and the focused Wi-Fi device. **Clear all** (⌘⇧X / Ctrl+Shift+X) resets them and keeps the filter.
+- **Scope bar:** a row under the header shows everything narrowing the views as chips you can remove: the time range, selected hosts and flows, and the focused Wi-Fi device. **Clear all** (⌘⇧X / Ctrl+Shift+X) removes them all and keeps the filter.
+- **Findings and Case tabs:** the suspicion queue and the case panel share the right-hand column. Switch with ⌘\ / Ctrl+\, or `g q` and `g c`. The Case tab shows how many items are pinned, and the count lights up when you pin something from Findings.
+- **Pane sizes:** panes scale with the window until you drag a divider. The session table always keeps room for several rows. `g 0` resets the sizes.
+- **Keyboard:** ⌘K / Ctrl+K opens the command palette, which lists every action and its shortcut.
 
 Every finding, indicator and report line cites frame numbers and the capture's SHA-256, so any claim can be checked against the raw packets.
 
 **Wi-Fi (802.11) captures** from monitor-mode tools such as the WiFi Coconut, airodump-ng or Kismet (link types 105 and 127) open too. Walleye adds Access points, Clients and Wi-Fi frames tabs, a timeline with one lane per transmitting device, and detections for deauthentication floods, evil twins and karma access points. A deauth flood is judged partly by signal strength: frames that arrive at the same strength as the access point's own beacons most likely came from the real access point. Filter with `wifi.*`, `ap.*` and `client.*` fields or `mac aa:bb:cc:dd:ee:ff`. Unencrypted Wi-Fi traffic (open networks, Apple AWDL) also feeds the normal connection views.
 
-![Walleye triaging a StealC infection: a timeline selection narrows the queue to the C2 finding, and its first check-in is decoded in the packet pane](docs/images/triage.png)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/triage.png">
+  <img alt="Walleye triaging a StealC infection: the scope bar shows a time range, host and flow; the Findings tab holds the C2 finding, already pinned to the case; its first check-in is decoded in the packet pane" src="docs/images/triage-dark.png">
+</picture>
+
+Walleye follows the system appearance: dark by default, light when macOS or your desktop is set to light.
 
 ## Status
 
-The MVP and Wi-Fi support are both on `main`, and every gate below passes.
+The MVP and Wi-Fi support are both on `main`, and every gate below passes. A round of usability work on the interface is under way: the scope bar ([#5](https://github.com/JWhiteUX/walleye/pull/5)) and the Findings and Case tabs ([#6](https://github.com/JWhiteUX/walleye/pull/6)) are merged. Next are clearer filter-bar states, a welcome screen, faster triage (stepping through a finding's evidence frames) and a tidier case panel.
 
 **MVP gates**
 
