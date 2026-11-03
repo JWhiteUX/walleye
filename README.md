@@ -8,6 +8,8 @@ Walleye is a desktop app for security analysts that analyzes packet captures (PC
 - **Suspicion queue:** hosts ranked by score. Each entry lists its reasons, their weights and the frames behind them.
 - **Case panel:** verdicts, pins and notes. Exports indicators (CSV/JSON) and a report (Markdown/PDF).
 
+The suspicion queue and the case panel share the right-hand column as two tabs, **Findings** and **Case** (switch with ⌘\ / Ctrl+\, or `g q` / `g c`). The Case tab shows the pin count and highlights it when something is pinned from another tab. On smaller windows the timeline and packet pane give up height first, so the session table always keeps room for several rows.
+
 A scope bar under the header shows, as removable chips, everything that is narrowing the views: the time range, selected hosts and flows, and the focused Wi-Fi device. **Clear all** (⌘⇧X / Ctrl+Shift+X) resets them and keeps the filter.
 
 Every finding, indicator and report line cites frame numbers and the capture's SHA-256, so any claim can be checked against the raw packets.
