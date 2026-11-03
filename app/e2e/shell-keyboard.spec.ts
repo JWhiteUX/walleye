@@ -70,16 +70,18 @@ test("F6 cycles focus between panes, Shift+F6 goes back", async ({ page }) => {
   await page.keyboard.press("F6");
   expect(await paneOf()).toBe("packets");
   await page.keyboard.press("F6");
+  // Only the active side tab's pane is in the cycle (Findings by default).
   expect(await paneOf()).toBe("queue");
-  await page.keyboard.press("F6");
-  expect(await paneOf()).toBe("case");
   await page.keyboard.press("F6");
   expect(await paneOf()).toBe("filter");
   await page.keyboard.press("Shift+F6");
-  expect(await paneOf()).toBe("case");
+  expect(await paneOf()).toBe("queue");
 });
 
 test("splitters resize with the keyboard", async ({ page }) => {
+  // Tall enough that the stored sizes fit with the table at TABLE_MIN, so the
+  // timeline has room to grow (on a short window fitLayout already caps it).
+  await page.setViewportSize({ width: 1280, height: 1100 });
   await page.goto("/?mock=open");
   const sep = page.getByRole("separator", { name: "Resize timeline" });
   const before = Number(await sep.getAttribute("aria-valuenow"));
@@ -88,13 +90,25 @@ test("splitters resize with the keyboard", async ({ page }) => {
   await expect(sep).toHaveAttribute("aria-valuenow", String(before + 16));
 });
 
-test("case panel toggles with mod+\\", async ({ page }) => {
+test("mod+\\ switches between Findings and Case tabs", async ({ page }) => {
   await page.goto("/?mock=open");
-  await expect(page.getByTestId("case-panel")).toBeVisible();
+  const casePanel = page.getByTestId("case-panel");
+  const queuePanel = page.getByTestId("queue-panel");
+  await expect(queuePanel).toBeVisible();
+  await expect(casePanel).toBeHidden();
+  await expect(page.getByTestId("side-tab-findings")).toHaveAttribute("aria-selected", "true");
   await page.getByRole("heading", { name: "Walleye" }).click();
   await page.keyboard.press(`${await modKey(page)}+Backslash`);
-  await expect(page.getByTestId("case-panel")).toHaveCount(0);
+  await expect(casePanel).toBeVisible();
+  await expect(queuePanel).toBeHidden();
+  await expect(page.getByTestId("side-tab-case")).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press(`${await modKey(page)}+Backslash`);
+  await expect(queuePanel).toBeVisible();
+  await expect(casePanel).toBeHidden();
+  await page.getByRole("heading", { name: "Walleye" }).click();
   await page.keyboard.press("g");
   await page.keyboard.press("c");
-  await expect(page.getByTestId("case-panel")).toBeVisible();
+  await expect(casePanel).toBeVisible();
+  await expect(queuePanel).toBeHidden();
+  await expect(page.getByTestId("side-tab-case")).toHaveAttribute("aria-selected", "true");
 });

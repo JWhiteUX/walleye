@@ -1,18 +1,17 @@
 // Application shell (Agent D): header (open capture, filter bar, saved
 // queries, palette), resizable panes, the global key handler, F6 pane cycling.
 //
-//   ┌ header ───────────────────────────────────────────────┐
-//   │ scope bar (time, hosts, flows, device chips)           │
-//   │ timeline                                │ queue │ case │
-//   │─────────────────────────────────────────│       │      │
-//   │ session table                           │       │      │
-//   │─────────────────────────────────────────│       │      │
-//   │ packet pane                             │       │      │
-//   └─────────────────────────────────────────┴───────┴──────┘
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CasePanel } from "../case";
+//   ┌ header ─────────────────────────────────────────────────┐
+//   │ scope bar (time, hosts, flows, device chips)             │
+//   │ timeline                                │ Findings | Case │
+//   │─────────────────────────────────────────│  (one column,   │
+//   │ session table (never squeezed below     │   two tabs)     │
+//   │   TABLE_MIN: other panes shrink first)  │                 │
+//   │─────────────────────────────────────────│                 │
+//   │ packet pane                             │                 │
+//   └─────────────────────────────────────────┴─────────────────┘
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { PacketPane } from "../packets";
-import { QueuePanel } from "../queue";
 import { useRegisterCommands, type Command } from "../shared/commands";
 import { api } from "../shared/ipc";
 import { useSelection } from "../shared/selection";
@@ -25,6 +24,19 @@ import { IngestDialog } from "./IngestDialog";
 import { formatShortcut, isMacPlatform } from "./keys";
 import { SavedQueries, type SavedQueriesHandle } from "./SavedQueries";
 import { ScopeBar } from "./ScopeBar";
+import {
+  DEFAULT_LAYOUT,
+  fitLayout,
+  LAYOUT_KEY,
+  PACKETS_MIN,
+  SIDE_MAX_SHARE,
+  SIDE_MIN,
+  SPLITTERS_H,
+  TABLE_MIN,
+  TIMELINE_MIN,
+  type Layout,
+} from "./layout";
+import { SidePanel, type SideTab } from "./SidePanel";
 import { Splitter } from "./Splitter";
 import { useGlobalKeys } from "./useGlobalKeys";
 import { useIngest } from "./useIngest";
@@ -32,29 +44,33 @@ import "./shell.css";
 
 export type PaneId = "filter" | "timeline" | "table" | "packets" | "queue" | "case";
 
-interface Layout {
-  timelineH: number;
-  packetsH: number;
-  queueW: number;
-  caseW: number;
-  caseOpen: boolean;
+/** Observed content-box size of an element (0×0 until first measured). */
+function useSize<T extends HTMLElement>(): [RefObject<T | null>, { w: number; h: number }] {
+  const ref = useRef<T>(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([e]) => {
+      if (e) setSize({ w: Math.round(e.contentRect.width), h: Math.round(e.contentRect.height) });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, size];
 }
-
-const DEFAULT_LAYOUT: Layout = { timelineH: 200, packetsH: 300, queueW: 320, caseW: 300, caseOpen: true };
-const LAYOUT_KEY = "walleye.layout.v1";
 
 function loadLayout(): Layout {
   try {
     const raw = localStorage.getItem(LAYOUT_KEY);
     if (!raw) return DEFAULT_LAYOUT;
     const v = JSON.parse(raw) as Partial<Layout>;
-    const num = (x: unknown, d: number) => (typeof x === "number" && Number.isFinite(x) ? x : d);
+    const num = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : null);
     return {
-      timelineH: num(v.timelineH, DEFAULT_LAYOUT.timelineH),
-      packetsH: num(v.packetsH, DEFAULT_LAYOUT.packetsH),
-      queueW: num(v.queueW, DEFAULT_LAYOUT.queueW),
-      caseW: num(v.caseW, DEFAULT_LAYOUT.caseW),
-      caseOpen: typeof v.caseOpen === "boolean" ? v.caseOpen : true,
+      timelineH: num(v.timelineH),
+      packetsH: num(v.packetsH),
+      sideW: num(v.sideW),
+      sideTab: v.sideTab === "case" ? "case" : "findings",
     };
   } catch {
     return DEFAULT_LAYOUT;
@@ -98,10 +114,14 @@ export function AppShell() {
   const savedRef = useRef<SavedQueriesHandle>(null);
   const mac = useMemo(() => isMacPlatform(), []);
   // Commands must be a stable array (useRegisterCommands); read live values through a ref.
-  const live = useRef({ ingest, caseOpen: layout.caseOpen });
+  const live = useRef({ ingest, sideTab: layout.sideTab });
   useEffect(() => {
-    live.current = { ingest, caseOpen: layout.caseOpen };
+    live.current = { ingest, sideTab: layout.sideTab };
   });
+  const [shellRef, shellSize] = useSize<HTMLDivElement>();
+  const [mainRef, mainSize] = useSize<HTMLElement>();
+  const fit = fitLayout(layout, shellSize.w, mainSize.h);
+  const avail = mainSize.h > 0 ? mainSize.h - SPLITTERS_H : Infinity;
 
   useEffect(() => {
     try {
@@ -126,16 +146,17 @@ export function AppShell() {
   }, [setSession]);
 
   const cycle = useCallback((d: 1 | -1) => {
-    const order: PaneId[] = ["filter", "timeline", "table", "packets", "queue"];
-    if (live.current.caseOpen) order.push("case");
+    // Only the visible side tab takes part in the cycle.
+    const order: PaneId[] = ["filter", "timeline", "table", "packets", live.current.sideTab === "case" ? "case" : "queue"];
     const cur = currentPane();
     const i = cur ? order.indexOf(cur) : -1;
     focusPane(order[(i + d + order.length) % order.length]!);
   }, []);
 
-  const goCase = useCallback(() => {
-    setLayout((l) => ({ ...l, caseOpen: true }));
-    requestAnimationFrame(() => focusPane("case"));
+  const goSide = useCallback((tab: SideTab) => {
+    setLayout((l) => ({ ...l, sideTab: tab }));
+    // Wait for the tab panel to un-hide before focusing into it.
+    requestAnimationFrame(() => focusPane(tab === "case" ? "case" : "queue"));
   }, []);
 
   const commands = useMemo<Command[]>(
@@ -165,18 +186,18 @@ export function AppShell() {
       { id: "shell.go-timeline", title: "Go to timeline", group: "Navigation", shortcut: "g t", run: () => focusPane("timeline") },
       { id: "shell.go-table", title: "Go to session table", group: "Navigation", shortcut: "g s", run: () => focusPane("table") },
       { id: "shell.go-packets", title: "Go to packet pane", group: "Navigation", shortcut: "g p", run: () => focusPane("packets") },
-      { id: "shell.go-queue", title: "Go to suspicion queue", group: "Navigation", shortcut: "g q", run: () => focusPane("queue") },
-      { id: "shell.go-case", title: "Go to case", group: "Navigation", shortcut: "g c", run: goCase },
+      { id: "shell.go-queue", title: "Go to findings (suspicion queue)", group: "Navigation", shortcut: "g q", run: () => goSide("findings") },
+      { id: "shell.go-case", title: "Go to case", group: "Navigation", shortcut: "g c", run: () => goSide("case") },
       {
         id: "shell.toggle-case",
-        title: "Show or hide the case panel",
+        title: "Switch between the Findings and Case tabs",
         group: "Layout",
         shortcut: "mod+\\",
-        run: () => setLayout((l) => ({ ...l, caseOpen: !l.caseOpen })),
+        run: () => setLayout((l) => ({ ...l, sideTab: l.sideTab === "case" ? "findings" : "case" })),
       },
       { id: "shell.reset-layout", title: "Reset pane sizes", group: "Layout", shortcut: "g 0", run: () => setLayout(DEFAULT_LAYOUT) },
     ],
-    [cycle, goCase],
+    [cycle, goSide],
   );
   useRegisterCommands(commands);
 
@@ -185,12 +206,7 @@ export function AppShell() {
   const kbd = (s: string) => formatShortcut(s, mac);
 
   return (
-    <div
-      className="wl-shell"
-      style={{
-        gridTemplateColumns: `minmax(0, 1fr) 6px ${layout.queueW}px${layout.caseOpen ? ` 6px ${layout.caseW}px` : ""}`,
-      }}
-    >
+    <div ref={shellRef} className="wl-shell" style={{ gridTemplateColumns: `minmax(0, 1fr) 6px ${fit.sideW}px` }}>
       <header className="wl-header" data-pane="filter" tabIndex={-1}>
         <h1 className="wl-brand">Walleye</h1>
         <button type="button" onClick={() => void ingest.open()} title={`Open capture (${kbd("mod+o")})`} data-testid="open-capture">
@@ -209,22 +225,15 @@ export function AppShell() {
         <button type="button" onClick={() => setPalette(true)} title={`Command palette (${kbd("mod+k")})`} data-testid="open-palette">
           Commands <kbd className="wl-kbd">{kbd("mod+k")}</kbd>
         </button>
-        <button
-          type="button"
-          aria-pressed={layout.caseOpen}
-          onClick={() => setLayout((l) => ({ ...l, caseOpen: !l.caseOpen }))}
-          title={`Case panel (${kbd("mod+\\")})`}
-        >
-          Case
-        </button>
         <GlobalKeys />
       </header>
 
       {session && <ScopeBar />}
 
       <main
+        ref={mainRef}
         className="wl-main"
-        style={{ gridTemplateRows: `${layout.timelineH}px 6px minmax(80px, 1fr) 6px ${layout.packetsH}px` }}
+        style={{ gridTemplateRows: `${fit.timelineH}px 6px minmax(80px, 1fr) 6px ${fit.packetsH}px` }}
         aria-label="Analysis"
       >
         <div className="wl-pane" data-pane="timeline" tabIndex={-1} id="wl-pane-timeline">
@@ -233,9 +242,9 @@ export function AppShell() {
         <Splitter
           label="Resize timeline"
           orientation="horizontal"
-          value={layout.timelineH}
-          min={80}
-          max={600}
+          value={fit.timelineH}
+          min={TIMELINE_MIN}
+          max={Math.max(TIMELINE_MIN, Math.min(600, avail - fit.packetsH - TABLE_MIN))}
           sign={1}
           controls="wl-pane-timeline"
           onChange={(v) => setLayout((l) => ({ ...l, timelineH: v }))}
@@ -246,9 +255,9 @@ export function AppShell() {
         <Splitter
           label="Resize packet pane"
           orientation="horizontal"
-          value={layout.packetsH}
-          min={120}
-          max={800}
+          value={fit.packetsH}
+          min={PACKETS_MIN}
+          max={Math.max(PACKETS_MIN, Math.min(800, avail - fit.timelineH - TABLE_MIN))}
           sign={-1}
           controls="wl-pane-packets"
           onChange={(v) => setLayout((l) => ({ ...l, packetsH: v }))}
@@ -259,35 +268,18 @@ export function AppShell() {
       </main>
 
       <Splitter
-        label="Resize suspicion queue"
+        label="Resize side panel"
         orientation="vertical"
-        value={layout.queueW}
-        min={220}
-        max={720}
+        value={fit.sideW}
+        min={SIDE_MIN}
+        max={Math.max(SIDE_MIN, Math.floor(shellSize.w * SIDE_MAX_SHARE)) || 720}
         sign={-1}
-        controls="wl-pane-queue"
-        onChange={(v) => setLayout((l) => ({ ...l, queueW: v }))}
+        controls="wl-side"
+        onChange={(v) => setLayout((l) => ({ ...l, sideW: v }))}
       />
-      <aside className="wl-pane wl-side" data-pane="queue" tabIndex={-1} id="wl-pane-queue" aria-label="Suspicion queue pane">
-        <QueuePanel />
+      <aside className="wl-side" id="wl-side" aria-label="Findings and case">
+        <SidePanel tab={layout.sideTab} onTab={(sideTab) => setLayout((l) => ({ ...l, sideTab }))} />
       </aside>
-      {layout.caseOpen && (
-        <>
-          <Splitter
-            label="Resize case panel"
-            orientation="vertical"
-            value={layout.caseW}
-            min={240}
-            max={800}
-            sign={-1}
-            controls="wl-pane-case"
-            onChange={(v) => setLayout((l) => ({ ...l, caseW: v }))}
-          />
-          <aside className="wl-pane wl-side" data-pane="case" tabIndex={-1} id="wl-pane-case" aria-label="Case pane">
-            <CasePanel />
-          </aside>
-        </>
-      )}
 
       <IngestDialog
         state={ingest.state}

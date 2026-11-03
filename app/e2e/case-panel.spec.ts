@@ -12,6 +12,8 @@ const MODULES: [string, string] = ["/src/shared/ipc.ts", "/src/shared/caseEvents
 test.describe("case panel", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/?mock=open");
+    // The case shares the side column with Findings; open its tab.
+    await page.getByTestId("side-tab-case").click();
     await expect(page.getByTestId("ioc-table")).toBeVisible();
   });
 
