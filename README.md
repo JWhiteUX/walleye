@@ -8,6 +8,8 @@ Walleye is a desktop app for security analysts that analyzes packet captures (PC
 - **Suspicion queue:** hosts ranked by score. Each entry lists its reasons, their weights and the frames behind them.
 - **Case panel:** verdicts, pins and notes. Exports indicators (CSV/JSON) and a report (Markdown/PDF).
 
+A scope bar under the header shows, as removable chips, everything that is narrowing the views: the time range, selected hosts and flows, and the focused Wi-Fi device. **Clear all** (⌘⇧X / Ctrl+Shift+X) resets them and keeps the filter.
+
 Every finding, indicator and report line cites frame numbers and the capture's SHA-256, so any claim can be checked against the raw packets.
 
 **Wi-Fi (802.11) captures** from monitor-mode tools such as the WiFi Coconut, airodump-ng or Kismet (link types 105 and 127) open too. Walleye adds Access points, Clients and Wi-Fi frames tabs, a timeline with one lane per transmitting device, and detections for deauthentication floods, evil twins and karma access points. A deauth flood is judged partly by signal strength: frames that arrive at the same strength as the access point's own beacons most likely came from the real access point. Filter with `wifi.*`, `ap.*` and `client.*` fields or `mac aa:bb:cc:dd:ee:ff`. Unencrypted Wi-Fi traffic (open networks, Apple AWDL) also feeds the normal connection views.

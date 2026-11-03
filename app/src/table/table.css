@@ -38,3 +38,4 @@
 .wl-sort:focus-visible { outline: 2px solid var(--wl-focus); }
 .wl-grid-cell.is-right .wl-sort { text-align: right; }
 .wl-grid-cell.is-placeholder { font-style: italic; color: var(--wl-text-muted); }
+.wl-table-scoped { color: var(--wl-text); border-left: 3px solid var(--wl-accent); padding-left: 6px; }
