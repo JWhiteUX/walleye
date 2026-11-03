@@ -19,7 +19,12 @@ Every finding, indicator and report line cites frame numbers and the capture's S
 
 **Wi-Fi (802.11) captures** from monitor-mode tools such as the WiFi Coconut, airodump-ng or Kismet (link types 105 and 127) open too. Walleye adds Access points, Clients and Wi-Fi frames tabs, a timeline with one lane per transmitting device, and detections for deauthentication floods, evil twins and karma access points. A deauth flood is judged partly by signal strength: frames that arrive at the same strength as the access point's own beacons most likely came from the real access point. Filter with `wifi.*`, `ap.*` and `client.*` fields or `mac aa:bb:cc:dd:ee:ff`. Unencrypted Wi-Fi traffic (open networks, Apple AWDL) also feeds the normal connection views.
 
-![Walleye triaging a StealC infection: the scope bar shows a time range, host and flow; the Findings tab holds the C2 finding, already pinned to the case; its first check-in is decoded in the packet pane](docs/images/triage.png)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/triage.png">
+  <img alt="Walleye triaging a StealC infection: the scope bar shows a time range, host and flow; the Findings tab holds the C2 finding, already pinned to the case; its first check-in is decoded in the packet pane" src="docs/images/triage-dark.png">
+</picture>
+
+Walleye follows the system appearance: dark by default, light when macOS or your desktop is set to light.
 
 ## Status
 
